@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/SWARNABHOOMI.Api/SWARNABHOOMI.Api.csproj" />
+    <Project Path="src/SWARNABHOOMI.Core/SWARNABHOOMI.Core.csproj" />
+    <Project Path="src/SWARNABHOOMI.Infrastructure/SWARNABHOOMI.Infrastructure.csproj" />
+    <Project Path="src/SWARNABHOOMI.Services/SWARNABHOOMI.Services.csproj" />
+  </Folder>
+</Solution>
