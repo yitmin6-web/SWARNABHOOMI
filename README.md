@@ -31,6 +31,15 @@ dotnet run --project ..\backend\src\SWARNABHOOMI.Api\SWARNABHOOMI.Api.csproj --u
 
 The seeded farmer and buyer accounts do not have default passwords. Sign in with the bootstrap administrator credentials configured in .NET user-secrets, or register an account and have an administrator approve it.
 
+To enable AI replies for all signed-in members, configure your Gemini API key locally with .NET user-secrets. Do not put the key in source control or share it in chat:
+
+```powershell
+dotnet user-secrets set --project backend\src\SWARNABHOOMI.Api\SWARNABHOOMI.Api.csproj "AiAssistant:ApiKey" "<your-gemini-api-key>"
+dotnet user-secrets set --project backend\src\SWARNABHOOMI.Api\SWARNABHOOMI.Api.csproj "AiAssistant:BaseUrl" "https://generativelanguage.googleapis.com/v1beta/openai/"
+dotnet user-secrets set --project backend\src\SWARNABHOOMI.Api\SWARNABHOOMI.Api.csproj "AiAssistant:Model" "gemini-4-hydrogen"
+```
+
+The Gemini endpoint and model above are the defaults. Alternatively, a Super Administrator can open **AI settings**, choose **Use Gemini settings**, paste the key into the password field, enable the assistant, and save. The key is encrypted on the server and never returned to the browser. Do not paste it into chat or source files. Restart the API after changing user-secrets. For deployment, provide `AiAssistant__ApiKey`, `AiAssistant__BaseUrl`, and `AiAssistant__Model` through the hosting platform's secret manager/environment. The assistant also supports other OpenAI-compatible providers by changing the base URL and model.
 ## Authentication
 
 The API hashes passwords with ASP.NET Core Identity's password hasher, issues an HttpOnly authentication cookie, rate-limits sign-in and registration attempts, and protects dashboard data endpoints. People can sign up as a farmer, buyer, or government user; new accounts remain inactive until an administrator approves them in the **People** section. Rejected requests are removed. A SuperAdmin can promote trusted active members to **Administrator** (Developer) from that section; public registration cannot grant administrative roles.
@@ -41,7 +50,7 @@ The bootstrap administrator is created or updated from the user-secret settings 
 
 The **Paddy field map** is available to farmers, buyers, government users, officers, and Super Administrators. Farmers see and register their own farms and draw field boundaries; officers see fields in assigned districts and government users can review authorized-area fields. Super Administrators can see all field boundaries. Buyers receive district-level verified-supply totals rather than field boundaries or member identities. Map users can mark a polygon and copy its GeoJSON coordinates; farmers can submit field boundaries for verification, and the server calculates their area. Map tiles are provided by OpenStreetMap; keep the visible attribution in the map.
 
-Signed-in members can use the **AI assistant** for general platform and rice-network questions. A Super Administrator can configure its OpenAI-compatible API base URL, model, and API key under **AI settings**. The API key is encrypted server-side and never sent back to the browser. The assistant is disabled until configured and enabled; it does not replace authorized agronomic advice, and chats are not persisted by the application.
+All signed-in members can use the **AI assistant** for questions about platform workflows and general rice-network topics. Configure Gemini or another OpenAI-compatible provider through server secrets/environment or **AI settings**. API keys configured in **AI settings** are encrypted server-side and never sent back to the browser. The assistant cannot access private member records or perform site actions; it does not replace authorized agronomic advice, and chats are not persisted by the application.
 
 For production, configure `ConnectionStrings:DefaultConnection` with a PostgreSQL connection string, run the API over HTTPS, and persist and protect the ASP.NET Core Data Protection key ring so the stored provider key remains decryptable across deployments. Store production credentials in a secret manager, not in this repository.
 

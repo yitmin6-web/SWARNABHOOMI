@@ -34,13 +34,48 @@ export default function AssistantPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: nextMessages }),
       })
-      const result = await response.json().catch(() => null) as { reply?: string; detail?: string; title?: string } | null
       if (!response.ok) {
+        const result = await response.json().catch(() => null) as { detail?: string; title?: string } | null
         throw new Error(result?.detail || result?.title || `Assistant request failed (${response.status}).`)
       }
-      if (!result?.reply) throw new Error('The assistant returned an empty response.')
-      setMessages((current) => [...current, { role: 'assistant', content: result.reply! }])
+      if (!response.body) throw new Error('The assistant response could not be streamed.')
+
+      setMessages((current) => [...current, { role: 'assistant', content: '' }])
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let reply = ''
+
+      while (true) {
+        const { value, done } = await reader.read()
+        buffer += decoder.decode(value, { stream: !done })
+
+        let eventEnd = buffer.indexOf('\n\n')
+        while (eventEnd >= 0) {
+          const event = buffer.slice(0, eventEnd)
+          buffer = buffer.slice(eventEnd + 2)
+          const data = event.split(/\r?\n/).find((line) => line.startsWith('data:'))
+          if (data) {
+            const chunk = JSON.parse(data.slice(5).trim()) as { content?: string; error?: string }
+            if (chunk.error) throw new Error(chunk.error)
+            if (chunk.content) {
+              reply += chunk.content
+              setMessages((current) => current.map((message, index) =>
+                index === current.length - 1 && message.role === 'assistant'
+                  ? { ...message, content: reply }
+                  : message))
+            }
+          }
+          eventEnd = buffer.indexOf('\n\n')
+        }
+
+        if (done) break
+      }
+
+      if (!reply.trim()) throw new Error('The assistant returned an empty response.')
     } catch (requestError) {
+      setMessages((current) => current.filter((message, index) =>
+        !(index === current.length - 1 && message.role === 'assistant' && !message.content)))
       setError(requestError instanceof Error ? requestError.message : 'Unable to reach the AI assistant.')
     } finally {
       setSending(false)

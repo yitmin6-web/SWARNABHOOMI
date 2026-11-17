@@ -1,4 +1,7 @@
+using System.Net.Http.Headers;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
@@ -29,19 +32,16 @@ public static class AssistantEndpoints
         return endpoints;
     }
 
-    private static async Task<IResult> GetConfiguration(SWARNABHOOMIContext db)
+    private static async Task<IResult> GetConfiguration(
+        SWARNABHOOMIContext db,
+        IConfiguration applicationConfiguration)
     {
         var configuration = await db.AiAssistantConfigurations
             .AsNoTracking()
             .OrderByDescending(item => item.CreatedAt)
             .FirstOrDefaultAsync();
 
-        return Results.Ok(new AssistantConfigurationResponse(
-            configuration is { IsEnabled: true, EncryptedApiKey.Length: > 0 },
-            configuration?.BaseUrl ?? "https://api.openai.com/v1",
-            configuration?.Model ?? "gpt-4o-mini",
-            configuration is { EncryptedApiKey.Length: > 0 },
-            configuration?.IsEnabled ?? false));
+        return Results.Ok(CreateConfigurationResponse(configuration, applicationConfiguration));
     }
 
     private static async Task<IResult> UpdateConfiguration(
@@ -49,6 +49,7 @@ public static class AssistantEndpoints
         ClaimsPrincipal principal,
         SWARNABHOOMIContext db,
         IDataProtectionProvider protectionProvider,
+        IConfiguration applicationConfiguration,
         IWebHostEnvironment environment,
         CancellationToken cancellationToken)
     {
@@ -77,7 +78,9 @@ public static class AssistantEndpoints
                 .Protect(request.ApiKey.Trim());
         }
 
-        if (request.IsEnabled && string.IsNullOrWhiteSpace(encryptedKey))
+        if (request.IsEnabled &&
+            string.IsNullOrWhiteSpace(encryptedKey) &&
+            string.IsNullOrWhiteSpace(applicationConfiguration["AiAssistant:ApiKey"]))
         {
             return Results.BadRequest(new { error = "Enter an API key before enabling the assistant." });
         }
@@ -94,6 +97,7 @@ public static class AssistantEndpoints
         configuration.IsEnabled = request.IsEnabled;
         configuration.UpdatedAt = DateTime.UtcNow;
         configuration.UpdatedBy = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        configuration.CreatedBy ??= principal.FindFirstValue(ClaimTypes.NameIdentifier);
         db.AuditLogs.Add(new AuditLog
         {
             Actor = configuration.UpdatedBy,
@@ -108,72 +112,86 @@ public static class AssistantEndpoints
                 configuration.IsEnabled
             })
         });
+
         await db.SaveChangesAsync(cancellationToken);
 
-        return Results.Ok(new AssistantConfigurationResponse(
-            configuration.IsEnabled && configuration.EncryptedApiKey.Length > 0,
-            configuration.BaseUrl,
-            configuration.Model,
-            configuration.EncryptedApiKey.Length > 0,
-            configuration.IsEnabled));
+        return Results.Ok(CreateConfigurationResponse(configuration, applicationConfiguration));
     }
 
-    private static async Task<IResult> Chat(
+    private static async Task Chat(
         AssistantChatRequest request,
-        ClaimsPrincipal principal,
+        HttpContext httpContext,
         SWARNABHOOMIContext db,
         IDataProtectionProvider protectionProvider,
+        IConfiguration applicationConfiguration,
+        IWebHostEnvironment environment,
         IHttpClientFactory httpClientFactory,
-        ILoggerFactory loggerFactory,
+        ILogger<AssistantEndpointLoggerCategory> logger,
         CancellationToken cancellationToken)
     {
-        var messages = request.Messages;
-        if (messages is null ||
-            messages.Count is 0 or > MaximumMessages ||
-            messages[^1].Role != "user" ||
-            messages.Any(message =>
-                message.Role is not ("user" or "assistant") ||
+        if (request.Messages is null ||
+            request.Messages.Count is 0 or > MaximumMessages ||
+            request.Messages.Any(message =>
+                message is null ||
+                string.IsNullOrWhiteSpace(message.Role) ||
                 string.IsNullOrWhiteSpace(message.Content) ||
-                message.Content.Length > MaximumMessageCharacters) ||
-            messages.Sum(message => (long)message.Content.Length) > MaximumConversationCharacters)
+                message.Content.Length > MaximumMessageCharacters ||
+                (message.Role != "user" && message.Role != "assistant")) ||
+            request.Messages.Sum(message => message.Content.Length) > MaximumConversationCharacters ||
+            request.Messages[^1].Role != "user")
         {
-            return Results.BadRequest(new
-            {
-                error = $"Send 1 to {MaximumMessages} user/assistant messages; each message is limited to {MaximumMessageCharacters} characters."
-            });
+            await WriteErrorAsync(
+                httpContext,
+                StatusCodes.Status400BadRequest,
+                "Provide up to 16 user/assistant messages, ending with a user message; each message is limited to 3,000 characters.",
+                cancellationToken);
+            return;
         }
 
         var configuration = await db.AiAssistantConfigurations
             .AsNoTracking()
             .OrderByDescending(item => item.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
-        if (configuration is not { IsEnabled: true } || string.IsNullOrWhiteSpace(configuration.EncryptedApiKey))
+
+        var baseUrl = configuration?.BaseUrl ?? applicationConfiguration["AiAssistant:BaseUrl"] ??
+            "https://generativelanguage.googleapis.com/v1beta/openai/";
+        var model = configuration?.Model ?? applicationConfiguration["AiAssistant:Model"] ?? "gemini-4-hydrogen";
+        var encryptedKey = configuration?.EncryptedApiKey;
+        var apiKey = applicationConfiguration["AiAssistant:ApiKey"];
+
+        if (!string.IsNullOrWhiteSpace(encryptedKey))
         {
-            return Results.Problem(
-                title: "AI assistant is not configured.",
-                detail: "Ask a Super Administrator to configure the assistant.",
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            try
+            {
+                apiKey = protectionProvider
+                    .CreateProtector(ProtectorPurpose)
+                    .Unprotect(encryptedKey);
+            }
+            catch (CryptographicException exception)
+            {
+                logger.LogError(exception, "The configured AI assistant API key could not be decrypted.");
+                await WriteErrorAsync(
+                    httpContext,
+                    StatusCodes.Status500InternalServerError,
+                    "The AI assistant configuration is unavailable.",
+                    cancellationToken);
+                return;
+            }
         }
 
-        string apiKey;
-        try
+        if (configuration is { IsEnabled: false } ||
+            string.IsNullOrWhiteSpace(apiKey) ||
+            string.IsNullOrWhiteSpace(model) ||
+            !TryValidateBaseUrl(baseUrl, environment.IsDevelopment(), out var baseUri))
         {
-            apiKey = protectionProvider
-                .CreateProtector(ProtectorPurpose)
-                .Unprotect(configuration.EncryptedApiKey);
-        }
-        catch (System.Security.Cryptography.CryptographicException exception)
-        {
-            loggerFactory.CreateLogger("Assistant").LogError(
-                exception,
-                "The stored assistant key cannot be unprotected.");
-            return Results.Problem(
-                title: "AI assistant configuration is unavailable.",
-                detail: "A Super Administrator must configure the assistant again.",
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            await WriteErrorAsync(
+                httpContext,
+                StatusCodes.Status503ServiceUnavailable,
+                "The AI assistant is not currently configured.",
+                cancellationToken);
+            return;
         }
 
-        var endpoint = new Uri($"{configuration.BaseUrl.TrimEnd('/')}/chat/completions");
         var providerMessages = new List<ProviderMessage>
         {
             new(
@@ -184,92 +202,155 @@ public static class AssistantEndpoints
                 "say that it is not configured and recommend consulting an Agrarian Officer. " +
                 "Do not ask users to share passwords, API keys, or unnecessary personal information.")
         };
-        providerMessages.AddRange(messages.Select(message => new ProviderMessage(message.Role, message.Content)));
+        providerMessages.AddRange(request.Messages.Select(message => new ProviderMessage(message.Role, message.Content)));
 
-        using var providerRequest = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        using var providerRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{baseUri.AbsoluteUri.TrimEnd('/')}/chat/completions")
         {
-            Content = System.Net.Http.Json.JsonContent.Create(new
-            {
-                model = configuration.Model,
-                messages = providerMessages,
-                max_tokens = 800,
-                temperature = 0.2
-            })
+            Content = new StringContent(
+                JsonSerializer.Serialize(new
+                {
+                    model,
+                    messages = providerMessages,
+                    stream = true,
+                    max_tokens = 800,
+                    temperature = 0.2
+                }),
+                Encoding.UTF8,
+                "application/json")
         };
-        providerRequest.Headers.Authorization =
-            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+        providerRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
         try
         {
             var client = httpClientFactory.CreateClient("ai-assistant");
-            using var providerResponse = await client.SendAsync(
+            using var response = await client.SendAsync(
                 providerRequest,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
-
-            if (!providerResponse.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
             {
-                loggerFactory.CreateLogger("Assistant").LogWarning(
-                    "AI provider returned HTTP {StatusCode} for user {UserId}.",
-                    (int)providerResponse.StatusCode,
-                    principal.FindFirstValue(ClaimTypes.NameIdentifier));
-                return Results.Problem(
-                    title: "The AI provider could not complete the request.",
-                    detail: "Check the assistant configuration or try again later.",
-                    statusCode: StatusCodes.Status502BadGateway);
+                logger.LogError("The AI assistant provider returned HTTP {StatusCode}.", (int)response.StatusCode);
+                await WriteErrorAsync(
+                    httpContext,
+                    StatusCodes.Status502BadGateway,
+                    $"The AI assistant provider could not complete the request (HTTP {(int)response.StatusCode}).",
+                    cancellationToken);
+                return;
             }
 
-            await using var responseStream = await providerResponse.Content.ReadAsStreamAsync(cancellationToken);
-            using var document = await JsonDocument.ParseAsync(
-                responseStream,
-                new JsonDocumentOptions { MaxDepth = 32 },
-                cancellationToken);
-            if (!document.RootElement.TryGetProperty("choices", out var choices) ||
-                choices.ValueKind != JsonValueKind.Array ||
-                choices.GetArrayLength() == 0 ||
-                !choices[0].TryGetProperty("message", out var message) ||
-                !message.TryGetProperty("content", out var content) ||
-                content.ValueKind != JsonValueKind.String ||
-                string.IsNullOrWhiteSpace(content.GetString()))
-            {
-                loggerFactory.CreateLogger("Assistant").LogWarning(
-                    "AI provider returned an unsupported response shape for user {UserId}.",
-                    principal.FindFirstValue(ClaimTypes.NameIdentifier));
-                return Results.Problem(
-                    title: "The AI provider returned an unsupported response.",
-                    statusCode: StatusCodes.Status502BadGateway);
-            }
+            httpContext.Response.StatusCode = StatusCodes.Status200OK;
+            httpContext.Response.ContentType = "text/event-stream";
+            httpContext.Response.Headers.CacheControl = "no-cache";
+            httpContext.Response.Headers.Append("X-Accel-Buffering", "no");
 
-            return Results.Ok(new AssistantChatResponse(content.GetString()!));
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var reader = new StreamReader(stream);
+            while (await reader.ReadLineAsync(cancellationToken) is { } line)
+            {
+                if (!line.StartsWith("data:", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var payload = line[5..].Trim();
+                if (payload == "[DONE]")
+                {
+                    break;
+                }
+
+                using var chunk = JsonDocument.Parse(payload);
+                if (chunk.RootElement.TryGetProperty("choices", out var choices) &&
+                    choices.ValueKind == JsonValueKind.Array &&
+                    choices.GetArrayLength() > 0 &&
+                    choices[0].TryGetProperty("delta", out var delta) &&
+                    delta.TryGetProperty("content", out var content) &&
+                    content.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrEmpty(content.GetString()))
+                {
+                    await WriteAssistantEventAsync(
+                        httpContext.Response,
+                        new { content = content.GetString() },
+                        cancellationToken);
+                }
+            }
         }
         catch (HttpRequestException exception)
         {
-            loggerFactory.CreateLogger("Assistant").LogWarning(
-                exception,
-                "AI provider request failed for user {UserId}.",
-                principal.FindFirstValue(ClaimTypes.NameIdentifier));
-            return Results.Problem(
-                title: "The AI provider is unreachable.",
-                detail: "Check the assistant endpoint and try again.",
-                statusCode: StatusCodes.Status502BadGateway);
+            logger.LogError(exception, "The AI assistant provider request failed.");
+            await WriteProviderErrorAsync(
+                httpContext,
+                "The AI assistant provider is temporarily unavailable.",
+                cancellationToken);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            return Results.Problem(
-                title: "The AI provider timed out.",
-                detail: "Try again later.",
-                statusCode: StatusCodes.Status504GatewayTimeout);
+            logger.LogError(exception, "The AI assistant provider request timed out.");
+            await WriteProviderErrorAsync(
+                httpContext,
+                "The AI assistant provider timed out.",
+                cancellationToken);
         }
         catch (JsonException exception)
         {
-            loggerFactory.CreateLogger("Assistant").LogWarning(
-                exception,
-                "AI provider response could not be parsed for user {UserId}.",
-                principal.FindFirstValue(ClaimTypes.NameIdentifier));
-            return Results.Problem(
-                title: "The AI provider returned an invalid response.",
-                statusCode: StatusCodes.Status502BadGateway);
+            logger.LogError(exception, "The AI assistant provider returned invalid JSON.");
+            await WriteProviderErrorAsync(
+                httpContext,
+                "The AI assistant provider returned an invalid response.",
+                cancellationToken);
         }
+    }
+
+    private static async Task WriteErrorAsync(
+        HttpContext httpContext,
+        int statusCode,
+        string detail,
+        CancellationToken cancellationToken)
+    {
+        httpContext.Response.StatusCode = statusCode;
+        await httpContext.Response.WriteAsJsonAsync(new { detail }, cancellationToken);
+    }
+
+    private static async Task WriteProviderErrorAsync(
+        HttpContext httpContext,
+        string detail,
+        CancellationToken cancellationToken)
+    {
+        if (httpContext.Response.HasStarted)
+        {
+            await WriteAssistantEventAsync(httpContext.Response, new { error = detail }, cancellationToken);
+            return;
+        }
+
+        await WriteErrorAsync(httpContext, StatusCodes.Status502BadGateway, detail, cancellationToken);
+    }
+
+    private static async Task WriteAssistantEventAsync(
+        HttpResponse response,
+        object data,
+        CancellationToken cancellationToken)
+    {
+        await response.WriteAsync($"data: {JsonSerializer.Serialize(data)}\n\n", cancellationToken);
+        await response.Body.FlushAsync(cancellationToken);
+    }
+
+    private static AssistantConfigurationResponse CreateConfigurationResponse(
+        AiAssistantConfiguration? configuration,
+        IConfiguration applicationConfiguration)
+    {
+        var hasStoredApiKey = !string.IsNullOrWhiteSpace(configuration?.EncryptedApiKey);
+        var hasEnvironmentApiKey = !string.IsNullOrWhiteSpace(applicationConfiguration["AiAssistant:ApiKey"]);
+        var baseUrl = configuration?.BaseUrl ?? applicationConfiguration["AiAssistant:BaseUrl"] ??
+            "https://generativelanguage.googleapis.com/v1beta/openai/";
+        var model = configuration?.Model ?? applicationConfiguration["AiAssistant:Model"] ?? "gemini-4-hydrogen";
+
+        return new AssistantConfigurationResponse(
+            IsConfigured: !string.IsNullOrWhiteSpace(model) && (hasStoredApiKey || hasEnvironmentApiKey),
+            BaseUrl: baseUrl,
+            Model: model,
+            HasApiKey: hasStoredApiKey || hasEnvironmentApiKey,
+            IsEnabled: configuration?.IsEnabled ?? hasEnvironmentApiKey);
     }
 
     private static bool TryValidateBaseUrl(string value, bool isDevelopment, out Uri baseUri)
@@ -301,25 +382,27 @@ public static class AssistantEndpoints
         baseUri = new Uri(parsed.GetLeftPart(UriPartial.Path).TrimEnd('/'), UriKind.Absolute);
         return true;
     }
+
+    public sealed record AssistantConfigurationRequest(
+        string BaseUrl,
+        string Model,
+        string? ApiKey,
+        bool IsEnabled);
+
+    public sealed record AssistantChatRequest(IReadOnlyList<AssistantChatMessage>? Messages);
+
+    public sealed record AssistantChatMessage(string Role, string Content);
+
+    private sealed record AssistantConfigurationResponse(
+        bool IsConfigured,
+        string BaseUrl,
+        string Model,
+        bool HasApiKey,
+        bool IsEnabled);
+
+    private sealed record ProviderMessage(string Role, string Content);
+
+    private sealed class AssistantEndpointLoggerCategory
+    {
+    }
 }
-
-public sealed record AssistantConfigurationRequest(
-    string BaseUrl,
-    string Model,
-    string? ApiKey,
-    bool IsEnabled);
-
-public sealed record AssistantConfigurationResponse(
-    bool IsConfigured,
-    string BaseUrl,
-    string Model,
-    bool HasApiKey,
-    bool IsEnabled);
-
-public sealed record AssistantChatMessage(string Role, string Content);
-
-public sealed record AssistantChatRequest(IReadOnlyList<AssistantChatMessage>? Messages);
-
-public sealed record AssistantChatResponse(string Reply);
-
-public sealed record ProviderMessage(string Role, string Content);

@@ -19,7 +19,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddDataProtection()
     .SetApplicationName("SWARNABHOOMI");
 builder.Services.AddHttpClient("ai-assistant", client =>
-    client.Timeout = TimeSpan.FromSeconds(35))
+    client.Timeout = TimeSpan.FromMinutes(5))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
     {
         AllowAutoRedirect = false

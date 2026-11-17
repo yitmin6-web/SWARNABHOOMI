@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 
+const geminiBaseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+const geminiModel = 'gemini-4-hydrogen'
+
 type AssistantConfiguration = {
   isConfigured: boolean
   baseUrl: string
@@ -12,8 +15,8 @@ type AssistantConfiguration = {
 export default function AssistantConfigPage() {
   const [configuration, setConfiguration] = useState<AssistantConfiguration>({
     isConfigured: false,
-    baseUrl: 'https://api.openai.com/v1',
-    model: 'gpt-4o-mini',
+    baseUrl: geminiBaseUrl,
+    model: geminiModel,
     hasApiKey: false,
     isEnabled: false,
   })
@@ -72,7 +75,7 @@ export default function AssistantConfigPage() {
         <div>
           <span className="panel-eyebrow">SUPER ADMINISTRATOR</span>
           <h2>AI assistant configuration</h2>
-          <p>Configure the OpenAI-compatible provider used by signed-in members.</p>
+          <p>Configure Gemini or another OpenAI-compatible provider for signed-in members.</p>
         </div>
         <span className={`assistant-config-status ${configuration.isConfigured ? 'assistant-config-ready' : ''}`}>
           {configuration.isConfigured ? 'Configured' : 'Not configured'}
@@ -89,12 +92,23 @@ export default function AssistantConfigPage() {
 
       {loading ? <p className="extension-empty">Loading assistant settings…</p> : (
         <form className="extension-form assistant-settings-form" onSubmit={(event) => void save(event)}>
+          <button
+            type="button"
+            className="extension-secondary-button"
+            onClick={() => setConfiguration((current) => ({
+              ...current,
+              baseUrl: geminiBaseUrl,
+              model: geminiModel,
+            }))}
+          >
+            Use Gemini settings
+          </button>
           <label>API base URL
             <input
               type="url"
               value={configuration.baseUrl}
               onChange={(event) => setConfiguration((current) => ({ ...current, baseUrl: event.target.value }))}
-              placeholder="https://api.openai.com/v1"
+              placeholder={geminiBaseUrl}
               required
               maxLength={500}
             />
@@ -113,7 +127,7 @@ export default function AssistantConfigPage() {
               type="password"
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
-              placeholder={configuration.hasApiKey ? 'Key saved; enter a new key only to rotate it' : 'Enter provider API key'}
+              placeholder={configuration.hasApiKey ? 'Key saved; enter a new key only to rotate it' : 'Enter your Gemini API key'}
               autoComplete="new-password"
               maxLength={4000}
             />
