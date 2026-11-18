@@ -59,3 +59,14 @@ For production, configure `ConnectionStrings:DefaultConnection` with a PostgreSQ
 The **Weather** page requests current model conditions for representative coordinates in all 25 Sri Lankan districts from Open-Meteo and refreshes every 15 minutes. These are model-based estimates, not readings from a station. The page links to Open-Meteo and the CC BY 4.0 licence and attributes the data. Open-Meteo's free API is for non-commercial use only; commercial deployments must use a paid plan or another authorized provider.
 
 The **Market prices** page checks the Central Bank of Sri Lanka's Daily Price Report page hourly and displays the newest report PDF, including its rice price tables for the markets CBSL covers. CBSL publishes daily reports, not continuous live trading quotes; if a report for today is not yet available, the page clearly shows the latest published report date.
+
+
+hashed_pw_123_kkp!1
+samankumara@gmail.com
+
+
+lalkantha_12345_11!
+lalkantha@gmail.com
+
+nimaltissa_12345_11!
+nimaltissa@gmail.com

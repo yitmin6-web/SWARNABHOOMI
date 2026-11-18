@@ -3,6 +3,38 @@
   gap: 20px;
 }
 
+.field-vertex-handle,
+.field-midpoint-handle {
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+}
+
+.field-vertex-handle span {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #183c30;
+  border-radius: 50%;
+  background: #d3ec9a;
+  box-shadow: 0 1px 4px rgba(24, 60, 48, 0.35);
+}
+
+.field-midpoint-handle span {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid #236443;
+  border-radius: 50%;
+  color: #236443;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(24, 60, 48, 0.25);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .extension-card {
   min-width: 0;
   padding: 22px;

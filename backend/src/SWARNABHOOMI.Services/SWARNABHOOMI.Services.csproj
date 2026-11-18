@@ -6,4 +6,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\SWARNABHOOMI.Core\SWARNABHOOMI.Core.csproj" />
+    <ProjectReference Include="..\SWARNABHOOMI.Infrastructure\SWARNABHOOMI.Infrastructure.csproj" />
+  </ItemGroup>
+
 </Project>

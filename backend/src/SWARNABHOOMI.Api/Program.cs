@@ -12,6 +12,7 @@ using SWARNABHOOMI.Api.FieldMap;
 using SWARNABHOOMI.Api.LiveData;
 using SWARNABHOOMI.Api.Members;
 using SWARNABHOOMI.Infrastructure.Data;
+using SWARNABHOOMI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -35,6 +36,7 @@ builder.Services.AddHttpClient("cbsl-prices", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SWARNABHOOMI/1.0");
 });
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+builder.Services.AddScoped<DashboardOverviewService>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -148,19 +150,19 @@ app.MapMemberDetailsEndpoints();
 
 var api = app.MapGroup("/api").RequireAuthorization();
 
-api.MapGet("/dashboard", async (SWARNABHOOMIContext db) =>
+api.MapGet("/dashboard", async (
+    ClaimsPrincipal principal,
+    DashboardOverviewService dashboardService,
+    CancellationToken cancellationToken) =>
 {
-    var summary = new
+    try
     {
-        users = await db.Users.CountAsync(user => user.IsActive),
-        farms = await db.Farms.CountAsync(),
-        demandEntries = await db.Demands.CountAsync(),
-        varieties = await db.RiceVarieties.CountAsync(),
-        marketPrices = await db.MarketPriceObservations.CountAsync(),
-        weatherRecords = await db.WeatherObservations.CountAsync()
-    };
-
-    return Results.Ok(summary);
+        return Results.Ok(await dashboardService.GetOverviewAsync(principal, cancellationToken));
+    }
+    catch (UnauthorizedAccessException)
+    {
+        return Results.Forbid();
+    }
 });
 
 api.MapGet("/users", async (SWARNABHOOMIContext db) =>
