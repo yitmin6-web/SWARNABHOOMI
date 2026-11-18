@@ -85,6 +85,7 @@ function estimateHectares(points: DrawPoint[]) {
 export default function FieldMapPage({ role }: { role: string }) {
   const mapElement = useRef<HTMLDivElement | null>(null)
   const map = useRef<L.Map | null>(null)
+  const baseLayers = useRef<{ osm: L.TileLayer; satellite: L.TileLayer } | null>(null)
   const fieldsLayer = useRef<L.LayerGroup | null>(null)
   const drawingLayer = useRef<L.LayerGroup | null>(null)
   const drawMode = useRef(false)
@@ -94,6 +95,7 @@ export default function FieldMapPage({ role }: { role: string }) {
   const [queue, setQueue] = useState<VerificationItem[]>([])
   const [selectedField, setSelectedField] = useState<FieldItem | null>(null)
   const [drawPoints, setDrawPoints] = useState<DrawPoint[]>([])
+  const [editingArea, setEditingArea] = useState(0)
   const [isDrawing, setIsDrawing] = useState(false)
   const [farmId, setFarmId] = useState('')
   const [farmName, setFarmName] = useState('')
@@ -153,14 +155,23 @@ export default function FieldMapPage({ role }: { role: string }) {
     if (!mapElement.current || map.current) return
 
     const mapInstance = L.map(mapElement.current).setView([7.9, 80.7], 7)
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '&copy; OpenStreetMap contributors',
     }).addTo(mapInstance)
+    const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      attribution: 'Tiles &copy; Esri',
+    })
+    L.control.layers({
+      OpenStreetMap: osmLayer,
+      Satellite: satelliteLayer,
+    }, undefined, { collapsed: false, position: 'topright' }).addTo(mapInstance)
 
     const fieldGroup = L.layerGroup().addTo(mapInstance)
     const drawingGroup = L.layerGroup().addTo(mapInstance)
     map.current = mapInstance
+    baseLayers.current = { osm: osmLayer, satellite: satelliteLayer }
     fieldsLayer.current = fieldGroup
     drawingLayer.current = drawingGroup
 
@@ -169,11 +180,13 @@ export default function FieldMapPage({ role }: { role: string }) {
       const nextPoints = [...currentPoints.current, [event.latlng.lat, event.latlng.lng] as DrawPoint]
       currentPoints.current = nextPoints
       setDrawPoints(nextPoints)
+      setEditingArea(estimateHectares(nextPoints))
     })
 
     return () => {
       mapInstance.remove()
       map.current = null
+      baseLayers.current = null
       fieldsLayer.current = null
       drawingLayer.current = null
     }
@@ -221,14 +234,61 @@ export default function FieldMapPage({ role }: { role: string }) {
     if (!layer) return
     layer.clearLayers()
 
-    drawPoints.forEach(([latitude, longitude]) => {
-      L.circleMarker([latitude, longitude], {
-        radius: 5,
-        color: '#183c30',
-        fillColor: '#d3ec9a',
-        fillOpacity: 1,
+    drawPoints.forEach(([latitude, longitude], pointIndex) => {
+      const marker = L.marker([latitude, longitude], {
+        draggable: true,
+        icon: L.divIcon({
+          className: 'field-vertex-handle',
+          html: '<span></span>',
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
+        }),
       }).addTo(layer)
+      marker.on('drag', (event: L.LeafletEvent) => {
+        const position = (event.target as L.Marker).getLatLng()
+        const preview = [...currentPoints.current]
+        preview[pointIndex] = [position.lat, position.lng]
+        setEditingArea(estimateHectares(preview))
+      })
+      marker.on('dragend', (event: L.LeafletEvent) => {
+        const position = (event.target as L.Marker).getLatLng()
+        const nextPoints = [...currentPoints.current]
+        nextPoints[pointIndex] = [position.lat, position.lng]
+        currentPoints.current = nextPoints
+        setDrawPoints(nextPoints)
+        setEditingArea(estimateHectares(nextPoints))
+      })
     })
+    if (drawPoints.length > 1) {
+      drawPoints.forEach((point, index) => {
+        const nextPoint = drawPoints[(index + 1) % drawPoints.length]
+        if (index === drawPoints.length - 1 && drawPoints.length < 3) return
+        const midpoint: DrawPoint = [(point[0] + nextPoint[0]) / 2, (point[1] + nextPoint[1]) / 2]
+        const marker = L.marker(midpoint, {
+          draggable: true,
+          icon: L.divIcon({
+            className: 'field-midpoint-handle',
+            html: '<span>+</span>',
+            iconSize: [18, 18],
+            iconAnchor: [9, 9],
+          }),
+        }).addTo(layer)
+        marker.on('drag', (event: L.LeafletEvent) => {
+          const position = (event.target as L.Marker).getLatLng()
+          const preview = [...currentPoints.current]
+          preview.splice(index + 1, 1, [position.lat, position.lng])
+          setEditingArea(estimateHectares(preview))
+        })
+        marker.on('dragend', (event: L.LeafletEvent) => {
+          const position = (event.target as L.Marker).getLatLng()
+          const nextPoints = [...currentPoints.current]
+          nextPoints.splice(index + 1, 0, [position.lat, position.lng])
+          currentPoints.current = nextPoints
+          setDrawPoints(nextPoints)
+          setEditingArea(estimateHectares(nextPoints))
+        })
+      })
+    }
     if (drawPoints.length >= 3) {
       L.polygon(drawPoints, {
         color: '#236443',
@@ -247,6 +307,7 @@ export default function FieldMapPage({ role }: { role: string }) {
     setIsDrawing(true)
     currentPoints.current = []
     setDrawPoints([])
+    setEditingArea(0)
     setNotice('Click the map to mark the paddy field boundary. Use at least three points.')
   }
 
@@ -261,6 +322,7 @@ export default function FieldMapPage({ role }: { role: string }) {
     setIsDrawing(false)
     currentPoints.current = []
     setDrawPoints([])
+    setEditingArea(0)
     setNotice('')
   }
 
@@ -408,7 +470,7 @@ export default function FieldMapPage({ role }: { role: string }) {
                   {isDrawing ? 'Finish marking' : 'Mark field area'}
                 </button>
                 <button type="button" className="extension-secondary-button" onClick={clearDrawing} disabled={drawPoints.length === 0}>Clear points</button>
-                <span>{drawPoints.length} points · {estimateHectares(drawPoints).toFixed(2)} ha</span>
+                <span>{drawPoints.length} points · {(drawPoints.length ? editingArea : 0).toFixed(2)} ha</span>
               </div>
               <div className="field-coordinate-export">
                 <label htmlFor="field-boundary-geojson">Boundary coordinates (GeoJSON Polygon)</label>
@@ -430,7 +492,7 @@ export default function FieldMapPage({ role }: { role: string }) {
         <div className="field-map-layout">
           <div className="field-map-frame">
             <div className="field-map-commands">
-              <span>OpenStreetMap · click a boundary to inspect it</span>
+               <span>OpenStreetMap / Satellite · click a boundary to inspect it</span>
               <button type="button" onClick={fitSriLanka}>Show Sri Lanka</button>
             </div>
             <div className="field-map-canvas" ref={mapElement} aria-label="Map of paddy fields" />

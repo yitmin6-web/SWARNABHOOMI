@@ -13,12 +13,13 @@ type Section = 'overview' | 'farms' | 'demands' | 'prices' | 'weather' | 'variet
 type DataSectionId = 'farms' | 'demands' | 'varieties' | 'users'
 
 type DashboardSummary = {
-  users: number
-  farms: number
-  demandEntries: number
-  varieties: number
-  marketPrices: number
-  weatherRecords: number
+  users: number | null
+  farms: number | null
+  demandEntries: number | null
+  varieties: number | null
+  marketPrices: number | null
+  weatherRecords: number | null
+  visibleCards: string[]
 }
 
 type User = {
@@ -110,7 +111,6 @@ const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
 
 const roleNames = ['Farmer', 'Buyer', 'Government', 'Officer', 'Super Administrator', 'Administrator']
 const now = new Date()
-const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening'
 const todayLabel = new Intl.DateTimeFormat('en', { weekday: 'short', day: 'numeric', month: 'short' }).format(now)
 
 async function getJson<T>(path: string): Promise<T> {
@@ -444,7 +444,7 @@ function App() {
           <div className="page-heading">
             <div>
               <div className="eyebrow"><span className="eyebrow-line" /> SWARNABHOOMI NETWORK</div>
-              <h1>{section === 'overview' ? <>{greeting}, <em>Admin</em></> : currentTitle.title}</h1>
+              <h1>{currentTitle.title}</h1>
               <p>{section === 'overview' ? 'Here’s what’s happening across your rice ecosystem today.' : currentTitle.subtitle}</p>
             </div>
             {!isExtensionSection && <div className="heading-actions">
@@ -755,11 +755,13 @@ function Overview({
   onNavigate: (section: Section) => void
 }) {
   const metrics = [
-    { title: 'Network members', value: data?.summary.users ?? '—', foot: 'Across the network', icon: 'users', color: 'green', section: (canManageUsers ? 'users' : 'overview') as Section },
-    { title: 'Registered farms', value: data?.summary.farms ?? '—', foot: `${data?.farms.reduce((area, farm) => area + farm.areaHectares, 0).toFixed(1) ?? '0.0'} ha registered`, icon: 'farm', color: 'blue', section: 'farms' as Section },
-    { title: 'Demand entries', value: data?.summary.demandEntries ?? '—', foot: 'Buyer demand entries', icon: 'layers', color: 'orange', section: 'demands' as Section },
-    { title: 'Rice varieties', value: data?.summary.varieties ?? '—', foot: 'Available to cultivate', icon: 'leaf', color: 'purple', section: 'varieties' as Section },
+    { card: 'users', title: 'Network members', value: data?.summary.users ?? '—', foot: 'Across the network', icon: 'users', color: 'green', section: (canManageUsers ? 'users' : 'overview') as Section },
+    { card: 'farms', title: 'Registered farms', value: data?.summary.farms ?? '—', foot: `${data?.farms.reduce((area, farm) => area + farm.areaHectares, 0).toFixed(1) ?? '0.0'} ha registered`, icon: 'farm', color: 'blue', section: 'farms' as Section },
+    { card: 'demandEntries', title: 'Demand entries', value: data?.summary.demandEntries ?? '—', foot: 'Buyer demand entries', icon: 'layers', color: 'orange', section: 'demands' as Section },
+    { card: 'varieties', title: 'Rice varieties', value: data?.summary.varieties ?? '—', foot: 'Available to cultivate', icon: 'leaf', color: 'purple', section: 'varieties' as Section },
   ]
+  const visibleCards = new Set(data?.summary.visibleCards ?? [])
+  const visibleMetrics = metrics.filter((metric) => visibleCards.has(metric.card))
 
   return (
     <>
@@ -783,7 +785,7 @@ function Overview({
       </section>
 
       <section className="metric-grid" aria-label="Network summary">
-        {metrics.map((metric, index) => (
+        {visibleMetrics.map((metric, index) => (
           <button
             className="metric-card"
             key={metric.title}
