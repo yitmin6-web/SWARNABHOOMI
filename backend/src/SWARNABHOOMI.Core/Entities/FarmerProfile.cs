@@ -11,7 +11,7 @@ public class FarmerProfile : BaseEntity
     public string? PrimaryVariety { get; set; }
     public string? ExperienceYears { get; set; }
 
-    // Navigation
+    // Navigations
     public virtual User User { get; set; } = null!;
     public virtual ICollection<Farm> Farms { get; set; } = new List<Farm>();
 }

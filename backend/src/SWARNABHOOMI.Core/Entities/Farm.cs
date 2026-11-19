@@ -14,7 +14,7 @@ public class Farm : BaseEntity
     public double? Latitude { get; set; }
     public double? Longitude { get; set; }
 
-    // Navigation
+    // Navigations
     public virtual User User { get; set; } = null!;
     public virtual ICollection<Field> Fields { get; set; } = new List<Field>();
 }
