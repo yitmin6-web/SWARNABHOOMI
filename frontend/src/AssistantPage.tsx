@@ -35,8 +35,11 @@ export default function AssistantPage() {
         body: JSON.stringify({ messages: nextMessages }),
       })
       if (!response.ok) {
-        const result = await response.json().catch(() => null) as { detail?: string; title?: string } | null
-        throw new Error(result?.detail || result?.title || `Assistant request failed (${response.status}).`)
+        const result = await response.json().catch(() => null) as { detail?: string; error?: string; title?: string } | null
+        const detail = result?.detail || result?.error || result?.title
+        throw new Error(detail
+          ? `Assistant request failed (${response.status}): ${detail}`
+          : `Assistant request failed (${response.status}).`)
       }
       if (!response.body) throw new Error('The assistant response could not be streamed.')
 

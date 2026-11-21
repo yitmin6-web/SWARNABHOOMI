@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 
 const geminiBaseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/'
-const geminiModel = 'gemini-4-hydrogen'
 
 type AssistantConfiguration = {
   isConfigured: boolean
@@ -16,7 +15,7 @@ export default function AssistantConfigPage() {
   const [configuration, setConfiguration] = useState<AssistantConfiguration>({
     isConfigured: false,
     baseUrl: geminiBaseUrl,
-    model: geminiModel,
+    model: '',
     hasApiKey: false,
     isEnabled: false,
   })
@@ -54,12 +53,18 @@ export default function AssistantConfigPage() {
         method: 'PUT',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...configuration, apiKey }),
+        body: JSON.stringify({ apiKey, isEnabled: configuration.isEnabled }),
       })
-      const body = await response.json().catch(() => null) as AssistantConfiguration & { error?: string } | null
-      if (!response.ok) throw new Error(body?.error || `Save failed (${response.status}).`)
-      if (!body) throw new Error('The server did not return the saved configuration.')
-      setConfiguration(body)
+      const body = await response.json().catch(() => null) as (AssistantConfiguration & { error?: string; detail?: string }) | null
+      if (!response.ok) throw new Error(body?.error || body?.detail || `Save failed (${response.status}).`)
+
+      const savedResponse = await fetch('/api/admin/assistant/config', { credentials: 'include' })
+      const savedBody = await savedResponse.json().catch(() => null) as (AssistantConfiguration & { error?: string; detail?: string }) | null
+      if (!savedResponse.ok) {
+        throw new Error(savedBody?.error || savedBody?.detail || `Unable to reload saved configuration (${savedResponse.status}).`)
+      }
+      if (!savedBody) throw new Error('The server did not return the saved configuration.')
+      setConfiguration(savedBody)
       setApiKey('')
       setNotice('AI assistant settings saved. The API key remains hidden.')
     } catch (requestError) {
@@ -92,36 +97,7 @@ export default function AssistantConfigPage() {
 
       {loading ? <p className="extension-empty">Loading assistant settings…</p> : (
         <form className="extension-form assistant-settings-form" onSubmit={(event) => void save(event)}>
-          <button
-            type="button"
-            className="extension-secondary-button"
-            onClick={() => setConfiguration((current) => ({
-              ...current,
-              baseUrl: geminiBaseUrl,
-              model: geminiModel,
-            }))}
-          >
-            Use Gemini settings
-          </button>
-          <label>API base URL
-            <input
-              type="url"
-              value={configuration.baseUrl}
-              onChange={(event) => setConfiguration((current) => ({ ...current, baseUrl: event.target.value }))}
-              placeholder={geminiBaseUrl}
-              required
-              maxLength={500}
-            />
-            <small>Use an HTTPS OpenAI-compatible API endpoint. Local HTTP endpoints are allowed only in Development.</small>
-          </label>
-          <label>Model
-            <input
-              value={configuration.model}
-              onChange={(event) => setConfiguration((current) => ({ ...current, model: event.target.value }))}
-              required
-              maxLength={200}
-            />
-          </label>
+          <p>Paste a Google AI Studio API key. The server automatically selects an available Gemini model.</p>
           <label>API key
             <input
               type="password"
@@ -130,6 +106,7 @@ export default function AssistantConfigPage() {
               placeholder={configuration.hasApiKey ? 'Key saved; enter a new key only to rotate it' : 'Enter your Gemini API key'}
               autoComplete="new-password"
               maxLength={4000}
+              required
             />
           </label>
           <label className="assistant-enable-toggle">
