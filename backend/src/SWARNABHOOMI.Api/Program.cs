@@ -19,12 +19,15 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenApi();
 builder.Services.AddDataProtection()
     .SetApplicationName("SWARNABHOOMI");
+builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient("ai-assistant", client =>
-    client.Timeout = TimeSpan.FromMinutes(5))
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-    {
-        AllowAutoRedirect = false
-    });
+{
+    client.Timeout = TimeSpan.FromSeconds(60);
+})
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = false
+});
 builder.Services.AddHttpClient("open-meteo", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(20);
