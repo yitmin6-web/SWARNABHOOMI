@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -6,6 +7,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using SWARNABHOOMI.Core.Entities;
 using SWARNABHOOMI.Infrastructure.Data;
 
@@ -17,15 +19,35 @@ public static class AssistantEndpoints
     private const int MaximumMessages = 16;
     private const int MaximumMessageCharacters = 3000;
     private const int MaximumConversationCharacters = 12000;
-    private const string GeminiBaseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/";
+    private const string GeminiBaseUrl = "https://generativelanguage.googleapis.com/v1beta";
+    private static readonly TimeSpan PerModelTimeout = TimeSpan.FromSeconds(20);
+
     private const string AssistantSystemPrompt =
         "You are the SWARNABHOOMI rice production information assistant. Be clear and concise. " +
         "Do not invent local agricultural rates, yields, official policies, or market guarantees. " +
         "If a question requires authorized local guidance that is not provided in the conversation, " +
         "say that it is not configured and recommend consulting an Agrarian Officer. " +
         "Do not ask users to share passwords, API keys, or unnecessary personal information.";
+
     private static readonly string[] GeminiRestrictedModelMarkers =
-        ["2.5", "image", "imagen", "veo", "audio", "tts", "live", "transcribe", "embedding"];
+    [
+        "gemini-2.5", "gemini-2.0", "gemini-1.5",
+        "image", "imagen", "veo", "audio", "tts", "live", "transcribe",
+        "embedding", "aqa", "deep-research", "robotics", "computer-use"
+    ];
+
+    private static readonly string[] GeminiModelPriority =
+    [
+        "gemini-flash-lite-latest",
+        "gemini-flash-latest",
+        "gemini-3.8-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-pro-latest",
+        "gemma-4-26b-a4b-it",
+        "gemma-4-31b-it"
+    ];
 
     public static IEndpointRouteBuilder MapAssistantEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -65,16 +87,18 @@ public static class AssistantEndpoints
         var configuration = await db.AiAssistantConfigurations
             .OrderByDescending(item => item.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
+
         var configuredBaseUrl = string.IsNullOrWhiteSpace(request.BaseUrl)
-            ? configuration?.BaseUrl ?? applicationConfiguration["AiAssistant:BaseUrl"] ?? GeminiBaseUrl
-            : request.BaseUrl;
+            ? GeminiBaseUrl
+            : request.BaseUrl.Trim();
+
         var configuredModel = string.IsNullOrWhiteSpace(request.Model)
-            ? configuration?.Model ?? applicationConfiguration["AiAssistant:Model"] ?? string.Empty
-            : request.Model;
+            ? string.Empty
+            : request.Model.Trim();
 
         if (configuredBaseUrl.Length > 500 ||
             !TryValidateBaseUrl(configuredBaseUrl, environment.IsDevelopment(), out var baseUri) ||
-            configuredModel.Trim().Length > 200 ||
+            configuredModel.Length > 200 ||
             (request.ApiKey?.Length ?? 0) > 4000)
         {
             return Results.BadRequest(new
@@ -83,17 +107,18 @@ public static class AssistantEndpoints
             });
         }
 
+        var normalizedApiKey = NormalizeApiKey(request.ApiKey);
         var encryptedKey = configuration?.EncryptedApiKey;
-        if (!string.IsNullOrWhiteSpace(request.ApiKey))
+        if (!string.IsNullOrWhiteSpace(normalizedApiKey))
         {
             encryptedKey = protectionProvider
                 .CreateProtector(ProtectorPurpose)
-                .Protect(request.ApiKey.Trim());
+                .Protect(normalizedApiKey);
         }
 
         if (request.IsEnabled &&
             string.IsNullOrWhiteSpace(encryptedKey) &&
-            string.IsNullOrWhiteSpace(applicationConfiguration["AiAssistant:ApiKey"]))
+            string.IsNullOrWhiteSpace(NormalizeApiKey(applicationConfiguration["AiAssistant:ApiKey"])))
         {
             return Results.BadRequest(new { error = "Enter an API key before enabling the assistant." });
         }
@@ -105,12 +130,13 @@ public static class AssistantEndpoints
         }
 
         configuration.BaseUrl = baseUri.ToString().TrimEnd('/');
-        configuration.Model = configuredModel.Trim();
+        configuration.Model = configuredModel;
         configuration.EncryptedApiKey = encryptedKey ?? string.Empty;
         configuration.IsEnabled = request.IsEnabled;
         configuration.UpdatedAt = DateTime.UtcNow;
         configuration.UpdatedBy = principal.FindFirstValue(ClaimTypes.NameIdentifier);
         configuration.CreatedBy ??= principal.FindFirstValue(ClaimTypes.NameIdentifier);
+
         db.AuditLogs.Add(new AuditLog
         {
             Actor = configuration.UpdatedBy,
@@ -139,6 +165,7 @@ public static class AssistantEndpoints
         IConfiguration applicationConfiguration,
         IWebHostEnvironment environment,
         IHttpClientFactory httpClientFactory,
+        IMemoryCache memoryCache,
         ILogger<AssistantEndpointLoggerCategory> logger,
         CancellationToken cancellationToken)
     {
@@ -169,15 +196,16 @@ public static class AssistantEndpoints
         var baseUrl = configuration?.BaseUrl ?? applicationConfiguration["AiAssistant:BaseUrl"] ?? GeminiBaseUrl;
         var model = configuration?.Model ?? applicationConfiguration["AiAssistant:Model"] ?? string.Empty;
         var encryptedKey = configuration?.EncryptedApiKey;
-        var apiKey = applicationConfiguration["AiAssistant:ApiKey"];
+        var apiKey = NormalizeApiKey(applicationConfiguration["AiAssistant:ApiKey"]);
 
         if (!string.IsNullOrWhiteSpace(encryptedKey))
         {
             try
             {
-                apiKey = protectionProvider
-                    .CreateProtector(ProtectorPurpose)
-                    .Unprotect(encryptedKey);
+                apiKey = NormalizeApiKey(
+                    protectionProvider
+                        .CreateProtector(ProtectorPurpose)
+                        .Unprotect(encryptedKey));
             }
             catch (CryptographicException exception)
             {
@@ -213,6 +241,7 @@ public static class AssistantEndpoints
                     model,
                     apiKey,
                     client,
+                    memoryCache,
                     httpContext,
                     logger,
                     cancellationToken);
@@ -260,107 +289,210 @@ public static class AssistantEndpoints
         string configuredModel,
         string apiKey,
         HttpClient client,
+        IMemoryCache memoryCache,
         HttpContext httpContext,
         ILogger<AssistantEndpointLoggerCategory> logger,
         CancellationToken cancellationToken)
     {
-        var modelsResponse = await DiscoverGeminiModelsAsync(client, apiKey, cancellationToken);
+        var modelsResponse = await DiscoverGeminiModelsAsync(client, memoryCache, apiKey, cancellationToken);
         if (!modelsResponse.IsSuccess)
         {
-            await WriteErrorAsync(httpContext, StatusCodes.Status502BadGateway, modelsResponse.Error!, cancellationToken);
+            var statusCode = modelsResponse.StatusCode is HttpStatusCode.BadRequest or
+                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                ? (int)modelsResponse.StatusCode
+                : StatusCodes.Status502BadGateway;
+            await WriteErrorAsync(httpContext, statusCode, modelsResponse.Error!, cancellationToken);
             return;
         }
 
         var models = modelsResponse.Models!;
-        if (!string.IsNullOrWhiteSpace(configuredModel))
-        {
-            var requestedModel = configuredModel.Trim();
-            if (models.Contains(requestedModel, StringComparer.OrdinalIgnoreCase))
-            {
-                models = new[] { requestedModel }
-                    .Concat(models.Where(candidate => !candidate.Equals(requestedModel, StringComparison.OrdinalIgnoreCase)))
-                    .ToList();
-            }
-        }
+        var usableConfiguredModel = IsUsableGeminiModel(configuredModel) ? configuredModel.Trim() : null;
+        var candidates = string.IsNullOrWhiteSpace(usableConfiguredModel)
+            ? models
+            : models.Where(model => model.Equals(usableConfiguredModel, StringComparison.OrdinalIgnoreCase))
+                .Concat(models.Where(model => !model.Equals(usableConfiguredModel, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
 
         string? lastError = null;
-        var quotaFailureCount = 0;
-        for (var index = 0; index < models.Count; index++)
+        var quotaFailures = 0;
+        var maxAttempts = Math.Min(6, candidates.Count);
+
+        for (var index = 0; index < maxAttempts; index++)
         {
-            var model = models[index];
+            var model = candidates[index];
+            var payload = BuildGeminiPayload(model, messages);
+
             using var providerRequest = new HttpRequestMessage(
                 HttpMethod.Post,
-                $"https://generativelanguage.googleapis.com/v1beta/models/{Uri.EscapeDataString(model)}:streamGenerateContent?alt=sse&key={Uri.EscapeDataString(apiKey)}")
+                $"{GeminiBaseUrl}/models/{Uri.EscapeDataString(model)}:generateContent")
             {
-                Content = new StringContent(
-                    JsonSerializer.Serialize(new
-                    {
-                        systemInstruction = new { parts = new[] { new { text = AssistantSystemPrompt } } },
-                        contents = messages.Select(message => new
-                        {
-                            role = message.Role == "assistant" ? "model" : "user",
-                            parts = new[] { new { text = message.Content } }
-                        }),
-                        generationConfig = new { maxOutputTokens = 800, temperature = 0.2 }
-                    }),
-                    Encoding.UTF8,
-                    "application/json")
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
             };
+            providerRequest.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
 
-            using var response = await client.SendAsync(
-                providerRequest,
-                HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
-            if (!response.IsSuccessStatusCode)
+            using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            attemptCts.CancelAfter(PerModelTimeout);
+
+            HttpResponseMessage response;
+            try
             {
-                lastError = await ReadProviderErrorAsync(response, cancellationToken);
-                var isQuotaFailure = response.StatusCode == System.Net.HttpStatusCode.TooManyRequests;
-                if (isQuotaFailure)
-                {
-                    quotaFailureCount++;
-                }
-
-                if (response.StatusCode is System.Net.HttpStatusCode.BadRequest or
-                    System.Net.HttpStatusCode.NotFound or
-                    System.Net.HttpStatusCode.TooManyRequests)
-                {
-                    logger.LogWarning("Gemini model {Model} was unavailable with HTTP {StatusCode}; retrying with the next discovered model.", model, (int)response.StatusCode);
-                    if (index < models.Count - 1)
-                    {
-                        continue;
-                    }
-                }
-
-                logger.LogError("The Gemini provider returned HTTP {StatusCode}: {Detail}", (int)response.StatusCode, lastError);
-                if (isQuotaFailure && quotaFailureCount == index + 1)
-                {
-                    await WriteErrorAsync(
-                        httpContext,
-                        StatusCodes.Status502BadGateway,
-                        "The Gemini API quota or rate limit was reached for the available models with this API key. Check Google AI Studio quota and billing, or try another API key.",
-                        cancellationToken);
-                    return;
-                }
-
-                await WriteErrorAsync(
-                    httpContext,
-                    StatusCodes.Status502BadGateway,
-                    $"The Gemini provider could not complete the request (HTTP {(int)response.StatusCode}): {lastError}",
-                    cancellationToken);
-                return;
+                response = await client.SendAsync(
+                    providerRequest,
+                    HttpCompletionOption.ResponseContentRead,
+                    attemptCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                logger.LogWarning("Gemini model {Model} timed out after {Seconds}s; trying next candidate.", model, PerModelTimeout.TotalSeconds);
+                lastError = $"Model '{model}' timed out.";
+                continue;
             }
 
-            await StreamGeminiSseAsync(response, httpContext.Response, cancellationToken);
-            return;
+            using (response)
+            {
+                if (!response.IsSuccessStatusCode)
+                {
+                    lastError = await ReadProviderErrorAsync(response, attemptCts.Token);
+
+                    if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                    {
+                        await WriteErrorAsync(
+                            httpContext,
+                            (int)response.StatusCode,
+                            "The Gemini API key is invalid, revoked, or lacks permission for the Gemini API.",
+                            cancellationToken);
+                        return;
+                    }
+
+                    if (response.StatusCode == HttpStatusCode.TooManyRequests)
+                    {
+                        logger.LogWarning("Gemini model {Model} hit quota/rate limit (429); trying next candidate.", model);
+                        quotaFailures++;
+                        continue;
+                    }
+
+                    if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.BadRequest)
+                    {
+                        logger.LogWarning("Gemini model {Model} returned HTTP {StatusCode} ({Detail}); trying next candidate.", model, (int)response.StatusCode, lastError);
+                        continue;
+                    }
+
+                    if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
+                    {
+                        logger.LogWarning("Gemini model {Model} is overloaded (503); trying next candidate.", model);
+                        await Task.Delay(TimeSpan.FromMilliseconds(400), cancellationToken);
+                        continue;
+                    }
+
+                    logger.LogError("The Gemini provider returned HTTP {StatusCode}: {Detail}", (int)response.StatusCode, lastError);
+                    continue;
+                }
+
+                string responseBody;
+                try
+                {
+                    responseBody = await response.Content.ReadAsStringAsync(attemptCts.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    logger.LogWarning("Reading response from Gemini model {Model} timed out; trying next candidate.", model);
+                    lastError = $"Model '{model}' timed out while responding.";
+                    continue;
+                }
+
+                using var document = JsonDocument.Parse(responseBody);
+                var reply = ExtractGeminiText(document);
+                if (string.IsNullOrWhiteSpace(reply))
+                {
+                    logger.LogWarning("Gemini model {Model} returned an empty response; trying next candidate.", model);
+                    lastError = $"Model '{model}' returned an empty response.";
+                    continue;
+                }
+
+                logger.LogInformation("AI assistant answered using Gemini model {Model}.", model);
+                httpContext.Response.StatusCode = StatusCodes.Status200OK;
+                httpContext.Response.ContentType = "text/event-stream";
+                httpContext.Response.Headers.CacheControl = "no-cache";
+                await WriteAssistantEventAsync(httpContext.Response, new { content = reply }, cancellationToken);
+                return;
+            }
         }
 
         await WriteErrorAsync(
             httpContext,
             StatusCodes.Status502BadGateway,
-            quotaFailureCount == models.Count
-                ? "The Gemini API quota or rate limit was reached for the available models with this API key. Check Google AI Studio quota and billing, or try another API key."
-                : $"The Gemini provider could not complete the request after trying the available models: {lastError}",
+            quotaFailures == maxAttempts
+                ? "The Google AI Studio project quota or rate limit was reached across available models. Please try again later or use another API key."
+                : $"The Gemini provider could not complete the request after trying {maxAttempts} models: {lastError ?? "No available model responded."}",
             cancellationToken);
+    }
+
+    private static string BuildGeminiPayload(string model, IReadOnlyList<AssistantChatMessage> messages)
+    {
+        if (model.StartsWith("gemma", StringComparison.OrdinalIgnoreCase))
+        {
+            var gemmaContents = messages.Select((message, index) => new
+            {
+                role = message.Role == "assistant" ? "model" : "user",
+                parts = new[]
+                {
+                    new
+                    {
+                        text = index == 0
+                            ? $"{AssistantSystemPrompt}\n\nUser message:\n{message.Content}"
+                            : message.Content
+                    }
+                }
+            });
+
+            return JsonSerializer.Serialize(new
+            {
+                contents = gemmaContents,
+                generationConfig = new { maxOutputTokens = 2048, temperature = 0.2 }
+            });
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            systemInstruction = new { parts = new[] { new { text = AssistantSystemPrompt } } },
+            contents = messages.Select(message => new
+            {
+                role = message.Role == "assistant" ? "model" : "user",
+                parts = new[] { new { text = message.Content } }
+            }),
+            generationConfig = new { maxOutputTokens = 2048, temperature = 0.2 }
+        });
+    }
+
+    private static string? ExtractGeminiText(JsonDocument document)
+    {
+        if (!document.RootElement.TryGetProperty("candidates", out var candidates) ||
+            candidates.ValueKind != JsonValueKind.Array ||
+            candidates.GetArrayLength() == 0 ||
+            !candidates[0].TryGetProperty("content", out var content) ||
+            !content.TryGetProperty("parts", out var parts) ||
+            parts.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var visibleText = string.Concat(parts.EnumerateArray()
+            .Where(part =>
+                !(part.TryGetProperty("thought", out var thought) && thought.ValueKind == JsonValueKind.True) &&
+                part.TryGetProperty("text", out var text) &&
+                text.ValueKind == JsonValueKind.String)
+            .Select(part => part.GetProperty("text").GetString()))
+            .Trim();
+
+        if (!string.IsNullOrWhiteSpace(visibleText))
+        {
+            return visibleText;
+        }
+
+        return string.Concat(parts.EnumerateArray()
+            .Where(part => part.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
+            .Select(part => part.GetProperty("text").GetString()))
+            .Trim();
     }
 
     private static async Task StreamOpenAiResponseAsync(
@@ -401,6 +533,7 @@ public static class AssistantEndpoints
             providerRequest,
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken);
+
         if (!response.IsSuccessStatusCode)
         {
             var detail = await ReadProviderErrorAsync(response, cancellationToken);
@@ -449,38 +582,48 @@ public static class AssistantEndpoints
 
     private static async Task<GeminiModelsResponse> DiscoverGeminiModelsAsync(
         HttpClient client,
+        IMemoryCache memoryCache,
         string apiKey,
         CancellationToken cancellationToken)
     {
-        using var response = await client.GetAsync(
-            $"https://generativelanguage.googleapis.com/v1beta/models?key={Uri.EscapeDataString(apiKey)}",
-            cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        var cacheKey = $"gemini-models:v2:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(apiKey)))}";
+        if (memoryCache.TryGetValue(cacheKey, out List<string>? cachedModels) && cachedModels is { Count: > 0 })
         {
-            return new GeminiModelsResponse(false, null, await ReadProviderErrorAsync(response, cancellationToken));
+            return new GeminiModelsResponse(true, cachedModels, null, null);
         }
 
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{GeminiBaseUrl}/models");
+        request.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
+
+        using var discoveryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        discoveryCts.CancelAfter(TimeSpan.FromSeconds(15));
+
+        using var response = await client.SendAsync(request, discoveryCts.Token);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = response.StatusCode is HttpStatusCode.BadRequest or
+                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                ? "The Gemini API key is invalid, revoked, or lacks permission for the Gemini API."
+                : await ReadProviderErrorAsync(response, discoveryCts.Token);
+            return new GeminiModelsResponse(false, null, error, response.StatusCode);
+        }
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(discoveryCts.Token));
         if (!document.RootElement.TryGetProperty("models", out var models) || models.ValueKind != JsonValueKind.Array)
         {
-            return new GeminiModelsResponse(false, null, "The Gemini models response did not contain a model list.");
+            return new GeminiModelsResponse(false, null, "The Gemini models response did not contain a model list.", null);
         }
 
         var discovered = models.EnumerateArray()
-            .Where(model => model.TryGetProperty("name", out var name) &&
+            .Where(model => model.TryGetProperty("name", out var _) &&
                 model.TryGetProperty("supportedGenerationMethods", out var methods) &&
                 methods.ValueKind == JsonValueKind.Array &&
                 methods.EnumerateArray().Any(method => method.GetString() == "generateContent"))
             .Select(model => model.GetProperty("name").GetString()!.Replace("models/", string.Empty, StringComparison.Ordinal))
-            .OrderByDescending(model => model.Contains("gemini-2.5-flash", StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(model => model.Contains("gemini-2.0-flash", StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(model => model.Contains("gemini-1.5-flash", StringComparison.OrdinalIgnoreCase))
-            .ThenBy(model => model)
             .ToList();
 
         var standardTextModels = discovered
-            .Where(model => !GeminiRestrictedModelMarkers.Any(marker =>
-                model.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+            .Where(IsUsableGeminiModel)
             .OrderBy(GetGeminiModelPriority)
             .ThenBy(model => model)
             .ToList();
@@ -490,58 +633,33 @@ public static class AssistantEndpoints
             discovered = standardTextModels;
         }
 
-        return discovered.Count == 0
-            ? new GeminiModelsResponse(false, null, "The Gemini API key has no available models that support generateContent.")
-            : new GeminiModelsResponse(true, discovered, null);
+        if (discovered.Count == 0)
+        {
+            return new GeminiModelsResponse(false, null, "The Gemini API key has no available models that support generateContent.", null);
+        }
+
+        memoryCache.Set(cacheKey, discovered, TimeSpan.FromMinutes(10));
+        return new GeminiModelsResponse(true, discovered, null, null);
     }
 
     private static int GetGeminiModelPriority(string model)
     {
-        if (model.Contains("gemini-3.8-flash", StringComparison.OrdinalIgnoreCase)) return 0;
-        if (model.Contains("gemini-3.5-flash-lite", StringComparison.OrdinalIgnoreCase)) return 1;
-        if (model.Contains("gemini-3.1-flash-lite", StringComparison.OrdinalIgnoreCase)) return 2;
-        if (model.Contains("gemini-3-flash-preview", StringComparison.OrdinalIgnoreCase)) return 3;
-        if (model.Contains("gemini-3.1-pro-preview", StringComparison.OrdinalIgnoreCase)) return 4;
-        return 5;
-    }
-
-    private static async Task StreamGeminiSseAsync(
-        HttpResponseMessage response,
-        HttpResponse httpResponse,
-        CancellationToken cancellationToken)
-    {
-        httpResponse.StatusCode = StatusCodes.Status200OK;
-        httpResponse.ContentType = "text/event-stream";
-        httpResponse.Headers.CacheControl = "no-cache";
-        httpResponse.Headers.Append("X-Accel-Buffering", "no");
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var reader = new StreamReader(stream);
-        while (await reader.ReadLineAsync(cancellationToken) is { } line)
+        var exactIndex = Array.FindIndex(GeminiModelPriority, priority =>
+            model.Equals(priority, StringComparison.OrdinalIgnoreCase));
+        if (exactIndex >= 0)
         {
-            if (!line.StartsWith("data:", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            using var chunk = JsonDocument.Parse(line[5..].Trim());
-            if (chunk.RootElement.TryGetProperty("candidates", out var candidates) &&
-                candidates.ValueKind == JsonValueKind.Array &&
-                candidates.GetArrayLength() > 0 &&
-                candidates[0].TryGetProperty("content", out var content) &&
-                content.TryGetProperty("parts", out var parts) &&
-                parts.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var part in parts.EnumerateArray())
-                {
-                    if (part.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String)
-                    {
-                        await WriteAssistantEventAsync(httpResponse, new { content = text.GetString() }, cancellationToken);
-                    }
-                }
-            }
+            return exactIndex;
         }
+
+        var partialIndex = Array.FindIndex(GeminiModelPriority, priority =>
+            model.Contains(priority, StringComparison.OrdinalIgnoreCase));
+        return partialIndex < 0 ? GeminiModelPriority.Length * 2 : GeminiModelPriority.Length + partialIndex;
     }
+
+    private static bool IsUsableGeminiModel(string model) =>
+        !string.IsNullOrWhiteSpace(model) &&
+        !GeminiRestrictedModelMarkers.Any(marker =>
+            model.Contains(marker, StringComparison.OrdinalIgnoreCase));
 
     private static async Task<string> ReadProviderErrorAsync(
         HttpResponseMessage response,
@@ -575,6 +693,16 @@ public static class AssistantEndpoints
 
     private static bool IsGoogleAiStudio(Uri baseUri) =>
         baseUri.Host.Equals("generativelanguage.googleapis.com", StringComparison.OrdinalIgnoreCase);
+
+    private static string? NormalizeApiKey(string? apiKey)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey))
+        {
+            return apiKey;
+        }
+
+        return apiKey.Trim().Trim('"', '\'').Trim();
+    }
 
     private static async Task WriteErrorAsync(
         HttpContext httpContext,
@@ -675,7 +803,11 @@ public static class AssistantEndpoints
 
     private sealed record ProviderMessage(string Role, string Content);
 
-    private sealed record GeminiModelsResponse(bool IsSuccess, List<string>? Models, string? Error);
+    private sealed record GeminiModelsResponse(
+        bool IsSuccess,
+        List<string>? Models,
+        string? Error,
+        HttpStatusCode? StatusCode);
 
     private sealed class AssistantEndpointLoggerCategory
     {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 
-const geminiBaseUrl = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+const geminiBaseUrl = 'https://generativelanguage.googleapis.com/v1beta'
 
 type AssistantConfiguration = {
   isConfigured: boolean
@@ -53,7 +53,7 @@ export default function AssistantConfigPage() {
         method: 'PUT',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey, isEnabled: configuration.isEnabled }),
+         body: JSON.stringify({ baseUrl: geminiBaseUrl, model: '', apiKey, isEnabled: configuration.isEnabled }),
       })
       const body = await response.json().catch(() => null) as (AssistantConfiguration & { error?: string; detail?: string }) | null
       if (!response.ok) throw new Error(body?.error || body?.detail || `Save failed (${response.status}).`)
@@ -97,7 +97,7 @@ export default function AssistantConfigPage() {
 
       {loading ? <p className="extension-empty">Loading assistant settings…</p> : (
         <form className="extension-form assistant-settings-form" onSubmit={(event) => void save(event)}>
-          <p>Paste a Google AI Studio API key. The server automatically selects an available Gemini model.</p>
+          <p>Paste a Google AI Studio API key. The server discovers and selects an available Gemini model automatically.</p>
           <label>API key
             <input
               type="password"
@@ -106,7 +106,6 @@ export default function AssistantConfigPage() {
               placeholder={configuration.hasApiKey ? 'Key saved; enter a new key only to rotate it' : 'Enter your Gemini API key'}
               autoComplete="new-password"
               maxLength={4000}
-              required
             />
           </label>
           <label className="assistant-enable-toggle">
