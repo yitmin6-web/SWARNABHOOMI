@@ -6,6 +6,7 @@ import AssistantConfigPage from './AssistantConfigPage'
 import AssistantPage from './AssistantPage'
 import CultivationPage from './CultivationPage'
 import RiceIntelligencePage from './RiceIntelligencePage'
+import MarketplacePage from './MarketplacePage'
 import FieldMapPage from './FieldMapPage'
 import MarketPricesPage from './MarketPricesPage'
 import MemberDetailsPage from './MemberDetailsPage'
@@ -120,7 +121,7 @@ const navigation: { id: Section; label: string; icon: string }[] = [
   { id: 'farms', label: 'Farms & fields', icon: 'farm' },
   { id: 'cultivation', label: 'Cultivation', icon: 'calendar' },
   { id: 'intelligence', label: 'Rice intelligence', icon: 'chart' },
-  { id: 'demands', label: 'Demand board', icon: 'layers' },
+  { id: 'demands', label: 'Marketplace & Demands', icon: 'layers' },
   { id: 'prices', label: 'Market prices', icon: 'chart' },
   { id: 'weather', label: 'Weather', icon: 'sun' },
   { id: 'varieties', label: 'Rice varieties', icon: 'leaf' },
@@ -133,7 +134,7 @@ const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
   farms: { title: 'Farms & fields', subtitle: 'Explore registered farms across Sri Lanka.' },
   cultivation: { title: 'Cultivation cycles', subtitle: 'Seasonal crop planning, sowing dates, and growth stages.' },
   intelligence: { title: 'Rice intelligence', subtitle: 'Automated agronomic inputs, harvest yield forecasts, and supply balance.' },
-  demands: { title: 'Demand board', subtitle: 'Keep track of buyer demand and upcoming seasons.' },
+  demands: { title: 'Rice Marketplace & Procurement', subtitle: 'Manage buyer demands, verified supply matching, and privacy-protected purchase orders.' },
   prices: { title: 'Market prices', subtitle: 'The latest official daily rice prices for selected markets.' },
   weather: { title: 'Weather', subtitle: 'Current model conditions across all 25 Sri Lankan districts.' },
   varieties: { title: 'Rice varieties', subtitle: 'Browse active varieties and their growing profiles.' },
@@ -444,7 +445,7 @@ function App() {
   }
 
   const currentTitle = sectionTitles[section]
-  const isExtensionSection = ['field-map', 'cultivation', 'intelligence', 'assistant', 'assistant-settings', 'member-details', 'prices', 'weather'].includes(section)
+  const isExtensionSection = ['field-map', 'cultivation', 'intelligence', 'demands', 'assistant', 'assistant-settings', 'member-details', 'prices', 'weather'].includes(section)
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query || !data) return data
@@ -622,6 +623,8 @@ function App() {
               <RiceIntelligencePage role={authUser.role} />
             ) : section === 'field-map' ? (
               canViewFieldMap ? <FieldMapPage role={authUser.role} /> : <AccessDenied />
+            ) : section === 'demands' ? (
+              <MarketplacePage role={authUser.role} />
             ) : section === 'assistant' ? (
               <AssistantPage />
             ) : section === 'assistant-settings' ? (

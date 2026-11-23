@@ -13,6 +13,7 @@ using SWARNABHOOMI.Api.FieldMap;
 using SWARNABHOOMI.Api.HarvestAndStock;
 using SWARNABHOOMI.Api.Intelligence;
 using SWARNABHOOMI.Api.LiveData;
+using SWARNABHOOMI.Api.Marketplace;
 using SWARNABHOOMI.Api.Members;
 using SWARNABHOOMI.Infrastructure.Data;
 using SWARNABHOOMI.Services;
@@ -46,6 +47,7 @@ builder.Services.AddScoped<IDashboardOverviewService, DashboardOverviewService>(
 builder.Services.AddScoped<IRiceIntelligenceService, RiceIntelligenceService>();
 builder.Services.AddScoped<ICultivationService, CultivationService>();
 builder.Services.AddScoped<IHarvestAndStockService, HarvestAndStockService>();
+builder.Services.AddScoped<IMarketplaceService, MarketplaceService>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -159,6 +161,7 @@ app.MapRiceIntelligenceEndpoints();
 app.MapHarvestAndStockEndpoints();
 app.MapAssistantEndpoints();
 app.MapMemberDetailsEndpoints();
+app.MapMarketplaceEndpoints();
 
 var api = app.MapGroup("/api").RequireAuthorization();
 
@@ -415,24 +418,6 @@ api.MapPost("/farms", async (CreateFarmRequest request, SWARNABHOOMIContext db) 
     .RequireAuthorization("AdminOnly");
 
 api.MapLiveDataEndpoints();
-
-api.MapGet("/demands", async (SWARNABHOOMIContext db) =>
-    Results.Ok(await db.Demands
-        .AsNoTracking()
-        .OrderByDescending(d => d.CreatedAt)
-        .Select(d => new
-        {
-            d.Id,
-            d.OwnerId,
-            d.District,
-            d.Season,
-            d.Status,
-            d.PeriodStart,
-            d.PeriodEnd,
-            d.Notes,
-            d.CreatedAt
-        })
-        .ToListAsync()));
 
 using (var scope = app.Services.CreateScope())
 {
