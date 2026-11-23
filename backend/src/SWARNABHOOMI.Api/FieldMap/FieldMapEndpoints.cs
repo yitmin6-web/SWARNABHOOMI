@@ -18,6 +18,7 @@ public static class FieldMapEndpoints
         fieldMap.MapPost("/fields", CreateField);
         fieldMap.MapGet("/verification-queue", GetVerificationQueue);
         fieldMap.MapPost("/fields/{fieldId:guid}/verification", ReviewField);
+        fieldMap.MapPost("/fields/{id:guid}/verify", VerifyField);
 
         return endpoints;
     }
@@ -29,7 +30,7 @@ public static class FieldMapEndpoints
     {
         var role = principal.FindFirstValue(ClaimTypes.Role);
         var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
-        var query = db.Fields.AsNoTracking().Include(field => field.Farm).AsQueryable();
+        var query = db.Fields.AsNoTracking().Include(field => field.Farm).ThenInclude(farm => farm.User).AsQueryable();
 
         if (role == "Farmer")
         {
@@ -74,10 +75,15 @@ public static class FieldMapEndpoints
                 field.Longitude,
                 field.Farm.District,
                 field.Farm.Province,
-                OwnerName = field.Farm.User.FirstName + " " + field.Farm.User.LastName,
-                VerificationStatus = field.Verifications
+                FarmerName = (field.Farm.User.FirstName + " " + field.Farm.User.LastName).Trim(),
+                LatestVerification = field.Verifications
                     .OrderByDescending(verification => verification.CreatedAt)
-                    .Select(verification => verification.Status)
+                    .Select(verification => new
+                    {
+                        verification.Status,
+                        verification.ReviewNotes,
+                        verification.ReviewedAt
+                    })
                     .FirstOrDefault()
             })
             .ToListAsync(cancellationToken);
@@ -89,8 +95,8 @@ public static class FieldMapEndpoints
                 .Select(group => new FieldRegionSummary(
                     group.Key,
                     group.Count(),
-                    group.Count(field => field.VerificationStatus == "Verified"),
-                    group.Where(field => field.VerificationStatus == "Verified").Sum(field => field.AreaHectares)))
+                    group.Count(field => (field.LatestVerification?.Status ?? "Pending") == "Verified"),
+                    group.Where(field => (field.LatestVerification?.Status ?? "Pending") == "Verified").Sum(field => field.AreaHectares)))
                 .OrderBy(region => region.District)
                 .ToArray();
 
@@ -107,8 +113,11 @@ public static class FieldMapEndpoints
             field.Longitude,
             field.District,
             field.Province,
-            field.OwnerName.Trim(),
-            field.VerificationStatus ?? "Unverified"));
+            field.FarmerName,
+            field.LatestVerification?.Status ?? "Pending",
+            field.LatestVerification?.ReviewNotes,
+            field.LatestVerification?.ReviewedAt,
+            field.FarmerName));
 
         return Results.Ok(new FieldMapResponse("fields", visibleFields, []));
     }
@@ -266,47 +275,56 @@ public static class FieldMapEndpoints
         CancellationToken cancellationToken)
     {
         var role = principal.FindFirstValue(ClaimTypes.Role);
-        if (role is not ("Officer" or "Government") ||
-            (role == "Officer" && !Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out _)))
+        if (role is not ("Officer" or "Government" or "SuperAdmin" or "Developer") ||
+            !Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
         {
             return Results.Forbid();
         }
 
-        var query = db.FieldVerifications
+        var query = db.Fields
             .AsNoTracking()
-            .Where(verification => verification.Status == "Pending")
-            .Include(verification => verification.Field)
-            .ThenInclude(field => field.Farm)
+            .Include(field => field.Farm)
             .ThenInclude(farm => farm.User)
+            .Include(field => field.Verifications)
+            .Where(field => !field.Verifications.Any() ||
+                field.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Pending")
             .AsQueryable();
 
         if (role == "Officer")
         {
-            var officerId = Guid.Parse(principal.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var districts = await db.OfficerAssignments
                 .AsNoTracking()
-                .Where(assignment => assignment.UserId == officerId && assignment.IsActive)
+                .Where(assignment => assignment.UserId == userId && assignment.IsActive)
                 .Select(assignment => assignment.District)
                 .Distinct()
                 .ToListAsync(cancellationToken);
-            query = query.Where(verification =>
-                verification.Field.Farm.District != null && districts.Contains(verification.Field.Farm.District));
+            query = query.Where(field =>
+                field.Farm.District != null && districts.Contains(field.Farm.District));
         }
 
         var queue = await query
-            .OrderBy(verification => verification.CreatedAt)
-            .Select(verification => new
+            .OrderBy(field => field.CreatedAt)
+            .Select(field => new
             {
-                verification.Id,
-                fieldId = verification.FieldId,
-                fieldName = verification.Field.Name,
-                farmName = verification.Field.Farm.Name,
-                ownerName = verification.Field.Farm.User.FirstName + " " + verification.Field.Farm.User.LastName,
-                verification.Field.AreaHectares,
-                verification.Field.BoundaryGeoJson,
-                district = verification.Field.Farm.District,
-                verification.ReviewNotes,
-                submittedAt = verification.CreatedAt
+                id = field.Id,
+                fieldId = field.Id,
+                fieldName = field.Name,
+                farmName = field.Farm.Name,
+                ownerName = (field.Farm.User.FirstName + " " + field.Farm.User.LastName).Trim(),
+                farmerName = (field.Farm.User.FirstName + " " + field.Farm.User.LastName).Trim(),
+                areaHectares = field.AreaHectares,
+                boundaryGeoJson = field.BoundaryGeoJson,
+                district = field.Farm.District,
+                province = field.Farm.Province,
+                reviewNotes = field.Verifications
+                    .OrderByDescending(v => v.CreatedAt)
+                    .Select(v => v.ReviewNotes)
+                    .FirstOrDefault(),
+                status = field.Verifications
+                    .OrderByDescending(v => v.CreatedAt)
+                    .Select(v => v.Status)
+                    .FirstOrDefault() ?? "Pending",
+                submittedAt = field.CreatedAt
             })
             .ToListAsync(cancellationToken);
 
@@ -321,7 +339,7 @@ public static class FieldMapEndpoints
         CancellationToken cancellationToken)
     {
         var role = principal.FindFirstValue(ClaimTypes.Role);
-        if (role is not ("Officer" or "Government") ||
+        if (role is not ("Officer" or "Government" or "SuperAdmin" or "Developer") ||
             !Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var reviewerId))
         {
             return Results.Forbid();
@@ -355,6 +373,20 @@ public static class FieldMapEndpoints
             }
         }
 
+        var pendingVerifications = await db.FieldVerifications
+            .Where(v => v.FieldId == fieldId && v.Status == "Pending")
+            .ToListAsync(cancellationToken);
+
+        foreach (var pending in pendingVerifications)
+        {
+            pending.Status = request.Status;
+            pending.ReviewerId = reviewerId.ToString();
+            pending.ReviewedAt = DateTime.UtcNow;
+            pending.ReviewNotes = request.Notes?.Trim();
+            pending.UpdatedAt = DateTime.UtcNow;
+            pending.UpdatedBy = reviewerId.ToString();
+        }
+
         var verification = new FieldVerification
         {
             FieldId = fieldId,
@@ -364,7 +396,12 @@ public static class FieldMapEndpoints
             ReviewNotes = request.Notes?.Trim(),
             CreatedBy = reviewerId.ToString()
         };
-        db.FieldVerifications.Add(verification);
+
+        if (pendingVerifications.Count == 0)
+        {
+            db.FieldVerifications.Add(verification);
+        }
+
         db.AuditLogs.Add(CreateAuditLog(
             reviewerId,
             $"Field{request.Status}",
@@ -374,6 +411,92 @@ public static class FieldMapEndpoints
         await db.SaveChangesAsync(cancellationToken);
 
         return Results.Ok(new { fieldId, verification.Status, verification.ReviewedAt, verification.ReviewNotes });
+    }
+
+    private static async Task<IResult> VerifyField(
+        Guid id,
+        VerifyFieldRequest request,
+        ClaimsPrincipal principal,
+        SWARNABHOOMIContext db,
+        CancellationToken cancellationToken)
+    {
+        var role = principal.FindFirstValue(ClaimTypes.Role);
+        if (role is not ("SuperAdmin" or "Developer" or "Officer" or "Government") ||
+            !Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var reviewerId))
+        {
+            return Results.Forbid();
+        }
+
+        var field = await db.Fields
+            .Include(candidate => candidate.Farm)
+            .SingleOrDefaultAsync(candidate => candidate.Id == id, cancellationToken);
+        if (field is null)
+        {
+            return Results.NotFound(new { error = "Field not found." });
+        }
+
+        if (role == "Officer")
+        {
+            var isAssigned = await db.OfficerAssignments.AnyAsync(
+                assignment => assignment.UserId == reviewerId &&
+                    assignment.IsActive &&
+                    assignment.District == field.Farm.District,
+                cancellationToken);
+            if (!isAssigned)
+            {
+                return Results.Forbid();
+            }
+        }
+
+        var newStatus = request.Approved ? "Verified" : "Rejected";
+        var reviewedAt = DateTime.UtcNow;
+        var notes = request.Notes?.Trim();
+
+        var pendingVerifications = await db.FieldVerifications
+            .Where(v => v.FieldId == id && v.Status == "Pending")
+            .ToListAsync(cancellationToken);
+
+        foreach (var pending in pendingVerifications)
+        {
+            pending.Status = newStatus;
+            pending.ReviewerId = reviewerId.ToString();
+            pending.ReviewedAt = reviewedAt;
+            pending.ReviewNotes = notes;
+            pending.UpdatedAt = reviewedAt;
+            pending.UpdatedBy = reviewerId.ToString();
+        }
+
+        var verification = new FieldVerification
+        {
+            FieldId = id,
+            Status = newStatus,
+            ReviewerId = reviewerId.ToString(),
+            ReviewedAt = reviewedAt,
+            ReviewNotes = notes,
+            CreatedBy = reviewerId.ToString()
+        };
+
+        if (pendingVerifications.Count == 0)
+        {
+            db.FieldVerifications.Add(verification);
+        }
+
+        db.AuditLogs.Add(CreateAuditLog(
+            reviewerId,
+            "FieldVerificationUpdated",
+            nameof(Field),
+            id,
+            notes));
+
+        await db.SaveChangesAsync(cancellationToken);
+
+        return Results.Ok(new
+        {
+            fieldId = id,
+            status = newStatus,
+            reviewedAt,
+            reviewNotes = notes
+        });
     }
 
     private static AuditLog CreateAuditLog(
@@ -403,6 +526,8 @@ public sealed record CreateFieldRequest(Guid FarmId, string Name, string Boundar
 
 public sealed record ReviewFieldRequest(string Status, string? Notes);
 
+public sealed record VerifyFieldRequest(bool Approved, string? Notes);
+
 public sealed record MyFarmResponse(
     Guid Id,
     string Name,
@@ -421,7 +546,10 @@ public sealed record FieldMapItem(
     string? District,
     string? Province,
     string OwnerName,
-    string VerificationStatus);
+    string VerificationStatus,
+    string? VerifierNotes = null,
+    DateTime? VerifiedAt = null,
+    string? FarmerName = null);
 
 public sealed record FieldRegionSummary(
     string District,

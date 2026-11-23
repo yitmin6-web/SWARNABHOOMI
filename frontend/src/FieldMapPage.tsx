@@ -19,7 +19,10 @@ type FieldItem = {
   district: string | null
   province: string | null
   ownerName: string
+  farmerName?: string | null
   verificationStatus: string
+  verifierNotes?: string | null
+  verifiedAt?: string | null
 }
 
 type RegionSummary = {
@@ -62,6 +65,40 @@ function createBoundaryGeoJson(points: DrawPoint[]) {
   if (points.length < 3) return ''
   const ring = [...points, points[0]].map(([latitude, longitude]) => [longitude, latitude])
   return JSON.stringify({ type: 'Polygon', coordinates: [ring] }, null, 2)
+}
+
+function getFieldStatusInfo(status: string) {
+  if (status === 'Verified') {
+    return {
+      label: 'Verified',
+      className: 'field-status-verified',
+      color: '#10b981',
+      fillColor: '#34d399',
+    }
+  }
+  if (status === 'Rejected') {
+    return {
+      label: 'Rejected',
+      className: 'field-status-rejected',
+      color: '#ef4444',
+      fillColor: '#f87171',
+    }
+  }
+  return {
+    label: 'Pending Verification',
+    className: '',
+    color: '#f59e0b',
+    fillColor: '#fbbf24',
+  }
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -337,12 +374,28 @@ export default function FieldMapPage({ role }: { role: string }) {
     layer.clearLayers()
 
     data.fields.forEach((field) => {
+      const statusInfo = getFieldStatusInfo(field.verificationStatus)
       const style = {
-        color: field.verificationStatus === 'Verified' ? '#10b981' : '#f59e0b',
-        fillColor: field.verificationStatus === 'Verified' ? '#34d399' : '#fbbf24',
+        color: statusInfo.color,
+        fillColor: statusInfo.fillColor,
         fillOpacity: 0.4,
         weight: 2,
       }
+
+      const popupHtml = `
+        <div style="font-family: inherit; font-size: 13px; line-height: 1.45; padding: 4px; min-width: 175px;">
+          <strong style="font-size: 14px; display: block; margin-bottom: 3px; color: #1e293b;">${escapeHtml(field.name)}</strong>
+          <div style="color: #64748b; margin-bottom: 5px;">${escapeHtml(field.farmName)} · ${escapeHtml(field.district || 'Location not set')}</div>
+          <div style="margin-bottom: 6px;"><strong>Area:</strong> ${field.areaHectares.toFixed(2)} ha</div>
+          <div>
+            <span style="display: inline-block; padding: 3px 9px; border-radius: 9999px; font-size: 11px; font-weight: 600; color: #fff; background-color: ${statusInfo.color};">
+              ${statusInfo.label}
+            </span>
+          </div>
+          ${field.verifierNotes ? `<div style="margin-top: 6px; font-size: 11px; color: #64748b;"><strong>Note:</strong> ${escapeHtml(field.verifierNotes)}</div>` : ''}
+        </div>
+      `
+
       if (field.boundaryGeoJson) {
         try {
           const geometry = JSON.parse(field.boundaryGeoJson)
@@ -350,7 +403,8 @@ export default function FieldMapPage({ role }: { role: string }) {
             style,
             onEachFeature: (_feature, featureLayer) => {
               featureLayer.on('click', () => setSelectedField(field))
-              featureLayer.bindTooltip(`${field.name} · ${field.verificationStatus}`)
+              featureLayer.bindPopup(popupHtml)
+              featureLayer.bindTooltip(`${field.name} · ${statusInfo.label}`)
             },
           }).addTo(layer)
         } catch {
@@ -358,12 +412,16 @@ export default function FieldMapPage({ role }: { role: string }) {
             L.circleMarker([field.latitude, field.longitude], { ...style, radius: 7 })
               .addTo(layer)
               .on('click', () => setSelectedField(field))
+              .bindPopup(popupHtml)
+              .bindTooltip(`${field.name} · ${statusInfo.label}`)
           }
         }
       } else if (field.latitude !== null && field.longitude !== null) {
         L.circleMarker([field.latitude, field.longitude], { ...style, radius: 7 })
           .addTo(layer)
           .on('click', () => setSelectedField(field))
+          .bindPopup(popupHtml)
+          .bindTooltip(`${field.name} · ${statusInfo.label}`)
       }
     })
   }, [data])
@@ -906,34 +964,48 @@ export default function FieldMapPage({ role }: { role: string }) {
                       {selectedField.areaHectares.toFixed(2)} ha
                     </span>
                     <span
-                      className={`field-status field-status-${selectedField.verificationStatus.toLowerCase()}`}
+                      className={`field-status ${getFieldStatusInfo(selectedField.verificationStatus).className}`}
                     >
-                      {selectedField.verificationStatus}
+                      {getFieldStatusInfo(selectedField.verificationStatus).label}
                     </span>
+                    {selectedField.verifierNotes && (
+                      <p style={{ margin: '6px 0 0', fontSize: '11px', color: '#64748b' }}>
+                        <strong>Reviewer note:</strong> {selectedField.verifierNotes}
+                      </p>
+                    )}
                     {role !== 'Farmer' && <small>Owner: {selectedField.ownerName}</small>}
                   </div>
                 ) : (
-                  data?.fields.map((field) => (
-                    <button
-                      type="button"
-                      className="field-summary-card field-summary-button"
-                      key={field.id}
-                      onClick={() => {
-                        setSelectedField(field)
-                        if (field.latitude !== null && field.longitude !== null) {
-                          map.current?.setView([field.latitude, field.longitude], 15)
-                        }
-                      }}
-                    >
-                      <strong>{field.name}</strong>
-                      <span>
-                        {field.farmName} · {field.district || 'District not set'}
-                      </span>
-                      <small>
-                        {field.areaHectares.toFixed(2)} ha · {field.verificationStatus}
-                      </small>
-                    </button>
-                  ))
+                  data?.fields.map((field) => {
+                    const statusInfo = getFieldStatusInfo(field.verificationStatus)
+
+                    return (
+                      <button
+                        type="button"
+                        className="field-summary-card field-summary-button"
+                        key={field.id}
+                        onClick={() => {
+                          setSelectedField(field)
+                          if (field.latitude !== null && field.longitude !== null) {
+                            map.current?.setView([field.latitude, field.longitude], 15)
+                          }
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: '8px' }}>
+                          <strong>{field.name}</strong>
+                          <span className={`field-status ${statusInfo.className}`}>
+                            {statusInfo.label}
+                          </span>
+                        </div>
+                        <span>
+                          {field.farmName} · {field.district || 'District not set'}
+                        </span>
+                        <small>
+                          {field.areaHectares.toFixed(2)} ha
+                        </small>
+                      </button>
+                    )
+                  })
                 )}
                 {!loading && !data?.fields.length && (
                   <p className="extension-empty">No field boundaries yet.</p>

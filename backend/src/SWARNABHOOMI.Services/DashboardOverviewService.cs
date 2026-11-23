@@ -70,7 +70,9 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     MyFields: myFields,
                     MyTotalAreaHectares: Math.Round(totalArea, 2),
                     VisibleCards: ["myFarms", "myFields", "myTotalArea", "marketPrices", "weatherRecords", "varieties"],
-                    DistrictSupplies: null);
+                    DistrictSupplies: null,
+                    PendingFieldVerifications: null,
+                    VerifiedFields: null);
             }
 
             case UserRole.Buyer:
@@ -115,7 +117,9 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     MyFields: null,
                     MyTotalAreaHectares: null,
                     VisibleCards: ["demandEntries", "varieties", "marketPrices", "weatherRecords"],
-                    DistrictSupplies: districtSupplies);
+                    DistrictSupplies: districtSupplies,
+                    PendingFieldVerifications: null,
+                    VerifiedFields: null);
             }
 
             case UserRole.Officer:
@@ -147,6 +151,19 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     .AsNoTracking()
                     .CountAsync(cancellationToken);
 
+                var pendingFieldVerifications = await db.Fields
+                    .AsNoTracking()
+                    .Where(f => f.Farm.District != null && assignedDistricts.Contains(f.Farm.District))
+                    .CountAsync(f => !f.Verifications.Any() ||
+                        f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Pending",
+                        cancellationToken);
+
+                var verifiedFields = await db.Fields
+                    .AsNoTracking()
+                    .Where(f => f.Farm.District != null && assignedDistricts.Contains(f.Farm.District))
+                    .CountAsync(f => f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Verified",
+                        cancellationToken);
+
                 return new DashboardOverviewResponse(
                     Users: null,
                     Farms: regionalFarms,
@@ -157,8 +174,10 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     MyFarms: null,
                     MyFields: null,
                     MyTotalAreaHectares: null,
-                    VisibleCards: ["farms", "demandEntries", "varieties", "marketPrices", "weatherRecords"],
-                    DistrictSupplies: null);
+                    VisibleCards: ["farms", "pendingVerifications", "verifiedFields", "demandEntries", "varieties", "marketPrices", "weatherRecords"],
+                    DistrictSupplies: null,
+                    PendingFieldVerifications: pendingFieldVerifications,
+                    VerifiedFields: verifiedFields);
             }
 
             case UserRole.Government:
@@ -187,6 +206,17 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     .AsNoTracking()
                     .CountAsync(cancellationToken);
 
+                var pendingFieldVerifications = await db.Fields
+                    .AsNoTracking()
+                    .CountAsync(f => !f.Verifications.Any() ||
+                        f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Pending",
+                        cancellationToken);
+
+                var verifiedFields = await db.Fields
+                    .AsNoTracking()
+                    .CountAsync(f => f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Verified",
+                        cancellationToken);
+
                 return new DashboardOverviewResponse(
                     Users: users,
                     Farms: farms,
@@ -197,8 +227,10 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     MyFarms: null,
                     MyFields: null,
                     MyTotalAreaHectares: null,
-                    VisibleCards: ["farms", "demandEntries", "varieties", "marketPrices", "weatherRecords"],
-                    DistrictSupplies: null);
+                    VisibleCards: ["farms", "pendingVerifications", "verifiedFields", "demandEntries", "varieties", "marketPrices", "weatherRecords"],
+                    DistrictSupplies: null,
+                    PendingFieldVerifications: pendingFieldVerifications,
+                    VerifiedFields: verifiedFields);
             }
 
             case UserRole.SuperAdmin:
@@ -229,6 +261,17 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     .AsNoTracking()
                     .CountAsync(cancellationToken);
 
+                var pendingFieldVerifications = await db.Fields
+                    .AsNoTracking()
+                    .CountAsync(f => !f.Verifications.Any() ||
+                        f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Pending",
+                        cancellationToken);
+
+                var verifiedFields = await db.Fields
+                    .AsNoTracking()
+                    .CountAsync(f => f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Verified",
+                        cancellationToken);
+
                 return new DashboardOverviewResponse(
                     Users: users,
                     Farms: farms,
@@ -239,8 +282,10 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     MyFarms: null,
                     MyFields: null,
                     MyTotalAreaHectares: null,
-                    VisibleCards: ["users", "farms", "demandEntries", "varieties", "marketPrices", "weatherRecords"],
-                    DistrictSupplies: null);
+                    VisibleCards: ["users", "farms", "pendingVerifications", "verifiedFields", "demandEntries", "varieties", "marketPrices", "weatherRecords"],
+                    DistrictSupplies: null,
+                    PendingFieldVerifications: pendingFieldVerifications,
+                    VerifiedFields: verifiedFields);
             }
         }
     }
@@ -257,7 +302,9 @@ public sealed record DashboardOverviewResponse(
     int? MyFields,
     decimal? MyTotalAreaHectares,
     IReadOnlyCollection<string> VisibleCards,
-    IReadOnlyCollection<DistrictSupplySummary>? DistrictSupplies
+    IReadOnlyCollection<DistrictSupplySummary>? DistrictSupplies,
+    int? PendingFieldVerifications = null,
+    int? VerifiedFields = null
 );
 
 public sealed record DistrictSupplySummary(

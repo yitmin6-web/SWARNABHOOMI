@@ -29,6 +29,8 @@ type DashboardSummary = {
   myTotalAreaHectares?: number | null
   visibleCards?: string[]
   districtSupplies?: { district: string; verifiedFields: number; verifiedAreaHectares: number }[] | null
+  pendingFieldVerifications?: number | null
+  verifiedFields?: number | null
 }
 
 type User = {
@@ -85,12 +87,30 @@ type RiceVariety = {
   isActive: boolean
 }
 
+type FieldMapItem = {
+  id: string
+  name: string
+  farmName: string
+  areaHectares: number
+  boundaryGeoJson: string | null
+  latitude: number | null
+  longitude: number | null
+  district: string | null
+  province: string | null
+  ownerName: string
+  farmerName?: string | null
+  verificationStatus: string
+  verifierNotes?: string | null
+  verifiedAt?: string | null
+}
+
 type AppData = {
   summary: DashboardSummary
   users: User[]
   farms: Farm[]
   demands: Demand[]
   varieties: RiceVariety[]
+  fields: FieldMapItem[]
 }
 
 const navigation: { id: Section; label: string; icon: string }[] = [
@@ -204,15 +224,18 @@ function App() {
   const [search, setSearch] = useState('')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
-  const loadData = useCallback(async (includeUsers: boolean) => {
-    const [summary, users, farms, demands, varieties] = await Promise.all([
+  const loadData = useCallback(async (includeUsers: boolean, canReviewFields: boolean) => {
+    const [summary, users, farms, demands, varieties, mapData] = await Promise.all([
       getJson<DashboardSummary>('/api/dashboard'),
       includeUsers ? getJson<User[]>('/api/users') : Promise.resolve([]),
       getJson<Farm[]>('/api/farms'),
       getJson<Demand[]>('/api/demands'),
       getJson<RiceVariety[]>('/api/rice-varieties'),
+      canReviewFields
+        ? getJson<{ fields: FieldMapItem[] }>('/api/field-map').catch(() => ({ fields: [] }))
+        : Promise.resolve({ fields: [] }),
     ])
-    return { summary, users, farms, demands, varieties }
+    return { summary, users, farms, demands, varieties, fields: mapData.fields || [] }
   }, [])
 
   useEffect(() => {
@@ -225,8 +248,10 @@ function App() {
 
         const user = await response.json() as AuthUser
         if (active) setAuthUser(user)
+        const isReviewer = ['SuperAdmin', 'Developer', 'Officer', 'Government'].includes(user.role)
         const loadedData = await loadData(
           user.role === 'SuperAdmin' || user.role === 'Developer',
+          isReviewer,
         )
         if (active) setData(loadedData)
       } catch (requestError) {
@@ -264,7 +289,8 @@ function App() {
     setError('')
     setLoading(true)
     try {
-      setData(await loadData(user.role === 'SuperAdmin' || user.role === 'Developer'))
+      const isReviewer = ['SuperAdmin', 'Developer', 'Officer', 'Government'].includes(user.role)
+      setData(await loadData(user.role === 'SuperAdmin' || user.role === 'Developer', isReviewer))
     } catch (requestError) {
       setError(getErrorMessage(requestError))
     } finally {
@@ -310,6 +336,20 @@ function App() {
     refreshData()
   }
 
+  const verifyField = async (id: string, approved: boolean, notes?: string) => {
+    const response = await fetch(`/api/field-map/fields/${id}/verify`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approved, notes: notes || '' }),
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: string } | null
+      throw new Error(body?.error || `Field verification failed (${response.status}).`)
+    }
+    refreshData()
+  }
+
   const signOut = async () => {
     try {
       const response = await fetch('/api/auth/logout', {
@@ -330,7 +370,8 @@ function App() {
   const refreshData = () => {
     setLoading(true)
     setError('')
-    void loadData(authUser?.role === 'SuperAdmin' || authUser?.role === 'Developer')
+    const isReviewer = authUser ? ['SuperAdmin', 'Developer', 'Officer', 'Government'].includes(authUser.role) : false
+    void loadData(authUser?.role === 'SuperAdmin' || authUser?.role === 'Developer', isReviewer)
       .then(setData)
       .catch((requestError: unknown) => setError(getErrorMessage(requestError)))
       .finally(() => setLoading(false))
@@ -347,6 +388,7 @@ function App() {
       farms: data.farms.filter((item) => `${item.name} ${item.district} ${item.province} ${item.farmOwner}`.toLowerCase().includes(query)),
       demands: data.demands.filter((item) => `${item.district} ${item.season} ${item.status}`.toLowerCase().includes(query)),
       varieties: data.varieties.filter((item) => `${item.name} ${item.varietyCode} ${item.description}`.toLowerCase().includes(query)),
+      fields: data.fields.filter((item) => `${item.name} ${item.farmName} ${item.farmerName || item.ownerName} ${item.district} ${item.province} ${item.verificationStatus}`.toLowerCase().includes(query)),
     }
   }, [data, search])
 
@@ -499,6 +541,7 @@ function App() {
               authUser={authUser}
               canManageUsers={canManageUsers}
               onNavigate={setActiveSection}
+              onVerifyField={verifyField}
             />
           ) : section === 'prices' ? (
             <MarketPricesPage />
@@ -525,6 +568,7 @@ function App() {
               onViewMember={openMemberDetails}
               onReviewRegistration={(id, approved) => manageUser(`/api/users/${id}/approval`, 'POST', { approved })}
               onChangeRole={(id, role) => manageUser(`/api/users/${id}/role`, 'PUT', { role })}
+              onVerifyField={verifyField}
             />
           )}
 
@@ -1125,22 +1169,186 @@ function BuyerOverview({
   )
 }
 
+function FieldVerificationSection({
+  fields,
+  onVerify,
+  refreshing,
+}: {
+  fields: FieldMapItem[]
+  onVerify: (fieldId: string, approved: boolean, notes?: string) => Promise<void>
+  refreshing: boolean
+}) {
+  const [remarks, setRemarks] = useState<Record<string, string>>({})
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState('')
+
+  const handleAction = async (fieldId: string, approved: boolean) => {
+    setBusyId(fieldId)
+    setActionError('')
+    try {
+      await onVerify(fieldId, approved, remarks[fieldId])
+      setRemarks((prev) => {
+        const next = { ...prev }
+        delete next[fieldId]
+        return next
+      })
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to update field verification.')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const sortedFields = useMemo(() => {
+    return [...fields].sort((a, b) => {
+      const aPending = (a.verificationStatus || 'Pending') === 'Pending'
+      const bPending = (b.verificationStatus || 'Pending') === 'Pending'
+      if (aPending && !bPending) return -1
+      if (!aPending && bPending) return 1
+      return 0
+    })
+  }, [fields])
+
+  const pendingCount = fields.filter((f) => (f.verificationStatus || 'Pending') === 'Pending').length
+
+  return (
+    <section className="pending-approvals" aria-labelledby="field-verifications-title" style={{ marginTop: '24px' }}>
+      <div className="pending-approvals-heading">
+        <div>
+          <span className="panel-eyebrow">FIELD VERIFICATION QUEUE</span>
+          <h4 id="field-verifications-title">Field Verifications</h4>
+        </div>
+        <span className="record-count">{pendingCount} pending</span>
+      </div>
+
+      {actionError && <p className="user-action-error" role="alert">{actionError}</p>}
+
+      {fields.length === 0 ? (
+        <EmptyState loading={refreshing} label="No mapped fields have been submitted yet." />
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>FIELD</th>
+                <th>FARM & OWNER</th>
+                <th>LOCATION</th>
+                <th>AUTO AREA</th>
+                <th>STATUS</th>
+                <th>REMARK / NOTES</th>
+                <th>ACTION</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedFields.map((field) => {
+                const status = field.verificationStatus || 'Pending'
+                const isVerified = status === 'Verified'
+                const isRejected = status === 'Rejected'
+                const isPending = !isVerified && !isRejected
+
+                return (
+                  <tr key={field.id}>
+                    <td>
+                      <strong className="table-primary">{field.name}</strong>
+                    </td>
+                    <td>
+                      <strong className="table-primary">{field.farmName}</strong>
+                      <span className="table-secondary">{field.farmerName || field.ownerName || 'Unknown farmer'}</span>
+                    </td>
+                    <td>
+                      {field.district || '—'}
+                      <span className="table-secondary">{field.province || 'Sri Lanka'}</span>
+                    </td>
+                    <td>
+                      <strong>{field.areaHectares.toFixed(2)} ha</strong>
+                    </td>
+                    <td>
+                      <span
+                        className={`status-badge ${
+                          isVerified
+                            ? 'status-positive'
+                            : isRejected
+                            ? 'status-neutral'
+                            : 'status-pending'
+                        }`}
+                        style={isRejected ? { color: '#991b1b', background: '#fee2e2' } : undefined}
+                      >
+                        <i style={isRejected ? { background: '#ef4444' } : undefined} />
+                        {status}
+                      </span>
+                    </td>
+                    <td>
+                      {isPending ? (
+                        <input
+                          type="text"
+                          aria-label={`Remark for ${field.name}`}
+                          placeholder="Optional notes or reason..."
+                          value={remarks[field.id] || ''}
+                          onChange={(e) =>
+                            setRemarks((prev) => ({ ...prev, [field.id]: e.target.value }))
+                          }
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '12px',
+                            border: '1px solid #dce5da',
+                            borderRadius: '6px',
+                            width: '100%',
+                            minWidth: '130px',
+                          }}
+                        />
+                      ) : (
+                        <span className="table-secondary">{field.verifierNotes || '—'}</span>
+                      )}
+                    </td>
+                    <td>
+                      <div className="user-action-buttons">
+                        <button
+                          type="button"
+                          className="user-approve-button"
+                          disabled={busyId === field.id || refreshing || isVerified}
+                          onClick={() => void handleAction(field.id, true)}
+                        >
+                          Verify
+                        </button>
+                        <button
+                          type="button"
+                          className="user-reject-button"
+                          disabled={busyId === field.id || refreshing || isRejected}
+                          onClick={() => void handleAction(field.id, false)}
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function AdminOverview({
   data,
   loading,
   canManageUsers,
   onNavigate,
+  onVerifyField,
 }: {
   data: AppData | null
   loading: boolean
   canManageUsers: boolean
   onNavigate: (section: Section) => void
+  onVerifyField: (fieldId: string, approved: boolean, notes?: string) => Promise<void>
 }) {
   const metrics = [
     { title: 'Network members', value: data?.summary.users ?? '—', foot: 'Across the network', icon: 'users', color: 'green', section: (canManageUsers ? 'users' : 'overview') as Section },
     { title: 'Registered farms', value: data?.summary.farms ?? '—', foot: `${data?.farms.reduce((area, farm) => area + farm.areaHectares, 0).toFixed(1) ?? '0.0'} ha registered`, icon: 'farm', color: 'blue', section: 'farms' as Section },
-    { title: 'Demand entries', value: data?.summary.demandEntries ?? '—', foot: 'Buyer demand entries', icon: 'layers', color: 'orange', section: 'demands' as Section },
-    { title: 'Rice varieties', value: data?.summary.varieties ?? '—', foot: 'Available to cultivate', icon: 'leaf', color: 'purple', section: 'varieties' as Section },
+    { title: 'Pending Verifications', value: data?.summary.pendingFieldVerifications ?? 0, foot: 'Fields awaiting review', icon: 'map', color: 'orange', section: 'field-map' as Section },
+    { title: 'Verified Fields', value: data?.summary.verifiedFields ?? 0, foot: 'Approved GPS boundaries', icon: 'leaf', color: 'purple', section: 'field-map' as Section },
   ]
 
   return (
@@ -1183,6 +1391,12 @@ function AdminOverview({
           </button>
         ))}
       </section>
+
+      <FieldVerificationSection
+        fields={data?.fields || []}
+        onVerify={onVerifyField}
+        refreshing={loading}
+      />
 
       <div className="dashboard-grid">
         <section className="panel recent-panel">
@@ -1242,12 +1456,14 @@ function Overview({
   authUser,
   canManageUsers,
   onNavigate,
+  onVerifyField,
 }: {
   data: AppData | null
   loading: boolean
   authUser: AuthUser
   canManageUsers: boolean
   onNavigate: (section: Section) => void
+  onVerifyField: (fieldId: string, approved: boolean, notes?: string) => Promise<void>
 }) {
   if (authUser.role === 'Farmer') {
     return <FarmerOverview data={data} loading={loading} onNavigate={onNavigate} />
@@ -1261,6 +1477,7 @@ function Overview({
       loading={loading}
       canManageUsers={canManageUsers}
       onNavigate={onNavigate}
+      onVerifyField={onVerifyField}
     />
   )
 }
@@ -1275,6 +1492,7 @@ function DataSection({
   onReviewRegistration,
   onChangeRole,
   onViewMember,
+  onVerifyField,
 }: {
   section: DataSectionId
   data: AppData | null
@@ -1285,6 +1503,7 @@ function DataSection({
   onReviewRegistration: (id: string, approved: boolean) => Promise<void>
   onChangeRole: (id: string, role: number) => Promise<void>
   onViewMember: (id: string) => void
+  onVerifyField: (fieldId: string, approved: boolean, notes?: string) => Promise<void>
 }) {
   const [actionError, setActionError] = useState('')
   const [busyUserId, setBusyUserId] = useState('')
@@ -1342,6 +1561,13 @@ function DataSection({
             </table>
           </div>
         </section>
+      )}
+      {section === 'users' && canManageUsers && (
+        <FieldVerificationSection
+          fields={data?.fields || []}
+          onVerify={onVerifyField}
+          refreshing={loading}
+        />
       )}
       {section === 'users' && actionError && pendingUsers.length === 0 && <p className="user-action-error" role="alert">{actionError}</p>}
       {loading && !data ? <div className="table-loading"><span className="loader" /> Loading live records…</div> : null}
