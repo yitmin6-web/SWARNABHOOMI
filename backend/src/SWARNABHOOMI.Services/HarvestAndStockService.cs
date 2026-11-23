@@ -13,7 +13,13 @@ public sealed record LogHarvestDto(
     string? QualityGrade = "Grade A",
     decimal? LossesKg = null,
     string? Notes = null,
-    bool AddToStock = true);
+    bool AddToStock = true,
+    Guid? CultivationId = null,
+    string? Quality = null)
+{
+    public Guid ResolvedCultivationId => CultivationRecordId != Guid.Empty ? CultivationRecordId : (CultivationId ?? Guid.Empty);
+    public string ResolvedQualityGrade => !string.IsNullOrWhiteSpace(QualityGrade) ? QualityGrade : (Quality ?? "Grade A");
+}
 
 public sealed record HarvestRecordDto(
     Guid HarvestId,
@@ -59,7 +65,11 @@ public sealed record UpsertStockDto(
     string? Province = null,
     string? Grade = "Grade A",
     string? CommodityStage = "Paddy",
-    string? Notes = null);
+    string? Notes = null,
+    string? Location = null)
+{
+    public string ResolvedDistrict => !string.IsNullOrWhiteSpace(District) ? District : (!string.IsNullOrWhiteSpace(Location) ? Location : "National");
+}
 
 public sealed record StockRecordDto(
     Guid Id,
@@ -150,13 +160,14 @@ public sealed class HarvestAndStockService(SWARNABHOOMIContext db) : IHarvestAnd
             throw new ArgumentException("Moisture percentage must be between 0% and 40%.");
         }
 
+        var targetId = dto.ResolvedCultivationId;
         var cr = await db.CultivationRecords
             .Include(c => c.Field)
                 .ThenInclude(f => f.Farm)
                     .ThenInclude(farm => farm.User)
             .Include(c => c.RiceVariety)
             .Include(c => c.HarvestForecasts)
-            .SingleOrDefaultAsync(c => c.Id == dto.CultivationRecordId, cancellationToken);
+            .SingleOrDefaultAsync(c => c.Id == targetId, cancellationToken);
 
         if (cr is null)
         {
@@ -465,7 +476,7 @@ public sealed class HarvestAndStockService(SWARNABHOOMIContext db) : IHarvestAnd
 
         var grade = string.IsNullOrWhiteSpace(dto.Grade) ? "Grade A" : dto.Grade.Trim();
         var commodityStage = string.IsNullOrWhiteSpace(dto.CommodityStage) ? "Paddy" : dto.CommodityStage.Trim();
-        var location = string.IsNullOrWhiteSpace(dto.District) ? "National" : dto.District.Trim();
+        var location = dto.ResolvedDistrict;
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
 
         // Find existing record for this user, variety, grade, stage, and location

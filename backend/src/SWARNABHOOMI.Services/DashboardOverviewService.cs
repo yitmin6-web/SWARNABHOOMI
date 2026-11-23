@@ -31,15 +31,20 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     .AsNoTracking()
                     .CountAsync(field => field.Farm.UserId == userId, cancellationToken);
 
-                var myFieldArea = await db.Fields
+                // Materialize projected decimal values to memory first for SQLite compatibility
+                var myFieldAreas = await db.Fields
                     .AsNoTracking()
                     .Where(field => field.Farm.UserId == userId)
-                    .SumAsync(field => (decimal?)field.AreaHectares, cancellationToken) ?? 0m;
+                    .Select(field => field.AreaHectares)
+                    .ToListAsync(cancellationToken);
+                var myFieldArea = myFieldAreas.Count > 0 ? myFieldAreas.Sum() : 0m;
 
-                var myFarmArea = await db.Farms
+                var myFarmAreas = await db.Farms
                     .AsNoTracking()
                     .Where(farm => farm.UserId == userId)
-                    .SumAsync(farm => (decimal?)farm.AreaHectares, cancellationToken) ?? 0m;
+                    .Select(farm => farm.AreaHectares)
+                    .ToListAsync(cancellationToken);
+                var myFarmArea = myFarmAreas.Count > 0 ? myFarmAreas.Sum() : 0m;
 
                 var totalArea = myFieldArea > 0 ? myFieldArea : myFarmArea;
 
@@ -94,17 +99,26 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     .CountAsync(cancellationToken);
 
                 // Anonymized district-level aggregated verified supply
-                var districtSupplies = await db.Fields
+                // Materialize projected values to memory first to avoid SQLite decimal SUM / GroupBy translation exceptions
+                var verifiedFields = await db.Fields
                     .AsNoTracking()
                     .Where(field => field.Farm.District != null &&
                         field.Verifications.Any(v => v.Status == "Verified"))
-                    .GroupBy(field => field.Farm.District!)
+                    .Select(field => new
+                    {
+                        District = field.Farm.District!,
+                        field.AreaHectares
+                    })
+                    .ToListAsync(cancellationToken);
+
+                var districtSupplies = verifiedFields
+                    .GroupBy(field => field.District)
                     .Select(group => new DistrictSupplySummary(
                         group.Key,
                         group.Count(),
                         Math.Round(group.Sum(f => f.AreaHectares), 2)))
                     .OrderBy(ds => ds.District)
-                    .ToListAsync(cancellationToken);
+                    .ToList();
 
                 return new DashboardOverviewResponse(
                     Users: null, // Strictly encapsulated: no network-wide member count
@@ -151,18 +165,17 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     .AsNoTracking()
                     .CountAsync(cancellationToken);
 
-                var pendingFieldVerifications = await db.Fields
+                var verificationStatuses = await db.Fields
                     .AsNoTracking()
                     .Where(f => f.Farm.District != null && assignedDistricts.Contains(f.Farm.District))
-                    .CountAsync(f => !f.Verifications.Any() ||
-                        f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Pending",
-                        cancellationToken);
+                    .Select(f => f.Verifications
+                        .OrderByDescending(v => v.CreatedAt)
+                        .Select(v => v.Status)
+                        .FirstOrDefault())
+                    .ToListAsync(cancellationToken);
 
-                var verifiedFields = await db.Fields
-                    .AsNoTracking()
-                    .Where(f => f.Farm.District != null && assignedDistricts.Contains(f.Farm.District))
-                    .CountAsync(f => f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Verified",
-                        cancellationToken);
+                var pendingFieldVerifications = verificationStatuses.Count(s => string.IsNullOrEmpty(s) || s == "Pending");
+                var verifiedFields = verificationStatuses.Count(s => s == "Verified");
 
                 return new DashboardOverviewResponse(
                     Users: null,
@@ -206,16 +219,16 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     .AsNoTracking()
                     .CountAsync(cancellationToken);
 
-                var pendingFieldVerifications = await db.Fields
+                var verificationStatuses = await db.Fields
                     .AsNoTracking()
-                    .CountAsync(f => !f.Verifications.Any() ||
-                        f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Pending",
-                        cancellationToken);
+                    .Select(f => f.Verifications
+                        .OrderByDescending(v => v.CreatedAt)
+                        .Select(v => v.Status)
+                        .FirstOrDefault())
+                    .ToListAsync(cancellationToken);
 
-                var verifiedFields = await db.Fields
-                    .AsNoTracking()
-                    .CountAsync(f => f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Verified",
-                        cancellationToken);
+                var pendingFieldVerifications = verificationStatuses.Count(s => string.IsNullOrEmpty(s) || s == "Pending");
+                var verifiedFields = verificationStatuses.Count(s => s == "Verified");
 
                 return new DashboardOverviewResponse(
                     Users: users,
@@ -261,16 +274,16 @@ public sealed class DashboardOverviewService(SWARNABHOOMIContext db) : IDashboar
                     .AsNoTracking()
                     .CountAsync(cancellationToken);
 
-                var pendingFieldVerifications = await db.Fields
+                var verificationStatuses = await db.Fields
                     .AsNoTracking()
-                    .CountAsync(f => !f.Verifications.Any() ||
-                        f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Pending",
-                        cancellationToken);
+                    .Select(f => f.Verifications
+                        .OrderByDescending(v => v.CreatedAt)
+                        .Select(v => v.Status)
+                        .FirstOrDefault())
+                    .ToListAsync(cancellationToken);
 
-                var verifiedFields = await db.Fields
-                    .AsNoTracking()
-                    .CountAsync(f => f.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Verified",
-                        cancellationToken);
+                var pendingFieldVerifications = verificationStatuses.Count(s => string.IsNullOrEmpty(s) || s == "Pending");
+                var verifiedFields = verificationStatuses.Count(s => s == "Verified");
 
                 return new DashboardOverviewResponse(
                     Users: users,

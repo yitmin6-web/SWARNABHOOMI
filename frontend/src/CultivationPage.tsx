@@ -9,25 +9,25 @@ type SeasonItem = {
   id: string
   name: string
   year: number
-  district: string | null
-  agrarianServiceCentre: string | null
+  district?: string | null
+  agrarianServiceCentre?: string | null
   plantingStart: string
   plantingEnd: string
   status: string
   isActive: boolean
-  approvedBy: string | null
-  approvedAt: string | null
-  closedAt: string | null
-  closureReason: string | null
+  approvedBy?: string | null
+  approvedAt?: string | null
+  closedAt?: string | null
+  closureReason?: string | null
 }
 
 type RiceVarietyItem = {
   id: string
   varietyCode: string
   name: string
-  description: string | null
+  description?: string | null
   maturityDays: number
-  averageYieldKgPerHectare: number | null
+  averageYieldKgPerHectare?: number | null
   isActive: boolean
 }
 
@@ -36,24 +36,25 @@ type FieldMapItem = {
   name: string
   farmName: string
   areaHectares: number
-  district: string | null
-  province: string | null
-  ownerName: string
-  verificationStatus: string
+  district?: string | null
+  province?: string | null
+  ownerName?: string
+  farmerName?: string | null
+  verificationStatus?: string
 }
 
 type CultivationItem = {
   id: string
-  farmerId: string
-  farmerName: string
+  farmerId?: string
+  farmerName?: string
   fieldId: string
   fieldName: string
-  farmId: string
+  farmId?: string
   farmName: string
-  district: string | null
-  province: string | null
+  district?: string | null
+  province?: string | null
   areaHectares: number
-  fieldVerificationStatus: string
+  fieldVerificationStatus?: string
   riceVarietyId: string
   riceVarietyName: string
   varietyCode: string
@@ -62,52 +63,64 @@ type CultivationItem = {
   plantingDate: string
   expectedHarvestDate: string
   status: string
-  notes: string | null
-  createdAt: string
+  notes?: string | null
+  createdAt?: string
 }
 
 type HarvestRecordItem = {
-  id: string
-  cultivationId: string
-  farmerId: string
-  farmerName: string
-  fieldId: string
-  fieldName: string
-  farmName: string
-  district: string | null
-  province: string | null
-  areaHectares: number
-  riceVarietyId: string
-  riceVarietyName: string
-  varietyCode: string
-  season: string
-  plantingDate: string
-  harvestDate: string
-  actualPaddyKg: number
-  forecastedYieldKg: number | null
-  varianceKg: number | null
-  variancePercent: number | null
-  accuracyPercent: number | null
-  quality: string | null
-  lossesKg: number | null
-  evidenceReference: string | null
-  verificationStatus: string
-  createdAtUtc: string
+  id?: string
+  harvestId?: string
+  cultivationId?: string
+  farmerId?: string
+  farmerName?: string
+  fieldId?: string
+  fieldName?: string
+  farmName?: string
+  district?: string | null
+  province?: string | null
+  areaHectares?: number
+  riceVarietyId?: string
+  riceVarietyName?: string
+  varietyCode?: string
+  season?: string
+  plantingDate?: string
+  harvestDate?: string
+  actualHarvestDate?: string
+  actualHarvestKg?: number
+  actualPaddyKg?: number
+  actualHarvestMt?: number
+  forecastedYieldKg?: number | null
+  forecastedYieldMt?: number | null
+  varianceKg?: number | null
+  variancePercent?: number | null
+  accuracyPercent?: number | null
+  qualityGrade?: string | null
+  quality?: string | null
+  moisturePercentage?: number | null
+  lossesKg?: number | null
+  notes?: string | null
+  evidenceReference?: string | null
+  verificationStatus?: string | null
+  createdAt?: string
 }
 
 type StockRecordItem = {
-  id: string
-  location: string
-  riceVarietyId: string
-  riceVarietyName: string
-  varietyCode: string
-  grade: string
-  commodityStage: string
-  quantityKg: number
-  asOfDate: string
-  verificationStatus: string | null
-  farmerName: string | null
-  createdAtUtc: string
+  id?: string
+  location?: string
+  district?: string
+  riceVarietyId?: string
+  riceVarietyName?: string
+  varietyCode?: string
+  grade?: string
+  commodityStage?: string
+  quantityKg?: number
+  quantityMt?: number
+  unit?: string
+  asOfDate?: string
+  verificationStatus?: string | null
+  farmerName?: string | null
+  createdBy?: string | null
+  createdAt?: string
 }
 
 const GROWTH_STAGES = [
@@ -134,10 +147,16 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 function formatDate(dateStr?: string | null): string {
   if (!dateStr) return '—'
-  const date = new Date(`${dateStr}T00:00:00`)
+  const date = new Date(`${dateStr.includes('T') ? dateStr : `${dateStr}T00:00:00`}`)
   return Number.isNaN(date.getTime())
     ? dateStr
     : new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(date)
+}
+
+function safeNum(val: unknown): number {
+  if (typeof val === 'number' && !Number.isNaN(val)) return val
+  const n = Number(val)
+  return Number.isNaN(n) ? 0 : n
 }
 
 function calculateHarvestDate(plantingDateStr: string, maturityDays: number): string {
@@ -148,24 +167,21 @@ function calculateHarvestDate(plantingDateStr: string, maturityDays: number): st
   return date.toISOString().split('T')[0]
 }
 
-function getGrowthStageBadge(stage: string) {
+function getGrowthStageBadge(stage: string = '') {
   switch (stage.toLowerCase()) {
     case 'planned':
       return { label: 'Planned', className: 'status-neutral' }
     case 'sown':
       return { label: 'Sown', className: 'status-pending' }
     case 'vegetative':
-      return { label: 'Vegetative', className: 'status-positive' }
     case 'flowering':
-      return { label: 'Flowering', className: 'status-positive' }
     case 'maturity':
-      return { label: 'Maturity', className: 'status-positive' }
     case 'harvested':
-      return { label: 'Harvested', className: 'status-positive' }
+      return { label: stage, className: 'status-positive' }
     case 'cancelled':
       return { label: 'Cancelled', className: 'status-neutral' }
     default:
-      return { label: stage, className: 'status-neutral' }
+      return { label: stage || 'Unknown', className: 'status-neutral' }
   }
 }
 
@@ -176,7 +192,7 @@ function getAccuracyClass(accuracy: number | null | undefined): string {
   return 'accuracy-low'
 }
 
-export default function CultivationPage({ role }: { role: string }) {
+export default function CultivationPage({ role = 'Farmer' }: { role?: string }) {
   const [activeTab, setActiveTab] = useState<'cycles' | 'harvest-stock'>('cycles')
   const [seasons, setSeasons] = useState<SeasonItem[]>([])
   const [varieties, setVarieties] = useState<RiceVarietyItem[]>([])
@@ -277,42 +293,48 @@ export default function CultivationPage({ role }: { role: string }) {
     [cultivations, harvestCultivationId]
   )
 
-  // Farmer total stored stock in kg
-  const totalStockKg = useMemo(
-    () => stocks.reduce((sum, s) => sum + s.quantityKg, 0),
-    [stocks]
-  )
+  // Farmer total stored stock in kg (safe reduce)
+  const totalStockKg = useMemo(() => {
+    if (!Array.isArray(stocks)) return 0
+    return stocks.reduce((sum, s) => sum + safeNum(s.quantityKg), 0)
+  }, [stocks])
 
   const loadData = useCallback(async () => {
-    const promises: [
-      Promise<SeasonItem[]>,
-      Promise<RiceVarietyItem[]>,
-      Promise<CultivationItem[]>,
-      Promise<{ fields: FieldMapItem[] }>,
-      Promise<HarvestRecordItem[]>,
-      Promise<StockRecordItem[]>
-    ] = [
+    const promises = [
       requestJson<SeasonItem[]>('/api/seasons').catch(() => []),
       requestJson<RiceVarietyItem[]>('/api/rice-varieties').catch(() => []),
       requestJson<CultivationItem[]>('/api/cultivations').catch(() => []),
       isFarmer
-        ? requestJson<{ fields: FieldMapItem[] }>('/api/field-map').catch(() => ({ fields: [] }))
+        ? requestJson<{ fields?: FieldMapItem[] }>('/api/field-map').catch(() => ({ fields: [] }))
         : Promise.resolve({ fields: [] }),
       role !== 'Buyer'
         ? requestJson<HarvestRecordItem[]>('/api/harvests').catch(() => [])
         : Promise.resolve([]),
-      requestJson<StockRecordItem[]>('/api/stocks').catch(() => []),
+      requestJson<any>('/api/stocks').catch(() => []),
     ]
 
-    const [seasonList, varietyList, cultivationList, fieldData, harvestList, stockList] =
+    const [seasonList, varietyList, cultivationList, fieldData, harvestList, rawStockData] =
       await Promise.all(promises)
+
+    const normalizedFields: FieldMapItem[] = Array.isArray((fieldData as any)?.fields)
+      ? (fieldData as any).fields
+      : Array.isArray(fieldData)
+        ? (fieldData as any)
+        : []
+
+    const normalizedStocks: StockRecordItem[] = Array.isArray(rawStockData)
+      ? rawStockData
+      : Array.isArray((rawStockData as any)?.individualRecords)
+        ? (rawStockData as any).individualRecords
+        : []
+
     return {
-      seasonList,
-      varietyList,
-      cultivationList,
-      fields: fieldData.fields || [],
-      harvestList,
-      stockList,
+      seasonList: Array.isArray(seasonList) ? seasonList : [],
+      varietyList: Array.isArray(varietyList) ? varietyList : [],
+      cultivationList: Array.isArray(cultivationList) ? cultivationList : [],
+      fields: normalizedFields,
+      harvestList: Array.isArray(harvestList) ? harvestList : [],
+      stockList: normalizedStocks,
     }
   }, [isFarmer, role])
 
@@ -323,6 +345,7 @@ export default function CultivationPage({ role }: { role: string }) {
       setCultivations(loaded.cultivationList)
       setHarvests(loaded.harvestList)
       setStocks(loaded.stockList)
+
       if (isFarmer) {
         setMyFields(loaded.fields)
         if (!fieldId && loaded.fields.length > 0) {
@@ -428,8 +451,8 @@ export default function CultivationPage({ role }: { role: string }) {
       setError('Select a cultivation cycle to record harvest for.')
       return
     }
-    const qty = Number(actualPaddyKg)
-    if (Number.isNaN(qty) || qty <= 0) {
+    const qty = safeNum(actualPaddyKg)
+    if (qty <= 0) {
       setError('Provide a valid actual harvest quantity in kg.')
       return
     }
@@ -443,18 +466,22 @@ export default function CultivationPage({ role }: { role: string }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          cultivationRecordId: harvestCultivationId,
           cultivationId: harvestCultivationId,
           actualHarvestKg: qty,
           harvestDate,
+          qualityGrade: qualityStr,
           quality: qualityStr,
-          lossesKg: lossesKg ? Number(lossesKg) : null,
+          moisturePercentage: safeNum(moisturePercentage),
+          lossesKg: lossesKg ? safeNum(lossesKg) : null,
           notes: harvestNotes.trim() || null,
           addToStock,
         }),
       })
 
-      const accuracyMsg = created.accuracyPercent !== null
-        ? ` Forecast model accuracy: ${created.accuracyPercent.toFixed(1)}%.`
+      const accuracy = created?.accuracyPercent ?? null
+      const accuracyMsg = accuracy !== null
+        ? ` Forecast model accuracy: ${accuracy.toFixed(1)}%.`
         : ''
       setNotice(`Harvest recorded successfully!${accuracyMsg} Growth stage advanced to 'Harvested'.`)
       setActualPaddyKg('')
@@ -477,8 +504,8 @@ export default function CultivationPage({ role }: { role: string }) {
       setError('Select a rice variety.')
       return
     }
-    const qty = Number(stockQuantityKg)
-    if (Number.isNaN(qty) || qty <= 0) {
+    const qty = safeNum(stockQuantityKg)
+    if (qty <= 0) {
       setError('Provide a valid stock quantity in kg.')
       return
     }
@@ -492,6 +519,7 @@ export default function CultivationPage({ role }: { role: string }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          district: loc,
           location: loc,
           riceVarietyId: stockVarietyId,
           grade: stockGrade,
@@ -552,7 +580,7 @@ export default function CultivationPage({ role }: { role: string }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: seasonName.trim(),
-          year: Number(seasonYear) || new Date().getFullYear(),
+          year: safeNum(seasonYear) || new Date().getFullYear(),
           district: seasonDistrict.trim() || 'National',
           plantingStart: seasonStart,
           plantingEnd: seasonEnd,
@@ -598,8 +626,9 @@ export default function CultivationPage({ role }: { role: string }) {
 
   // Filtered cultivations for Admin / Officer
   const filteredCultivations = useMemo(() => {
+    if (!Array.isArray(cultivations)) return []
     return cultivations.filter((c) => {
-      if (filterSeason && c.season.toLowerCase() !== filterSeason.toLowerCase()) return false
+      if (filterSeason && (c.season || '').toLowerCase() !== filterSeason.toLowerCase()) return false
       if (filterProvince && c.province !== filterProvince) return false
       if (filterDistrict && c.district !== filterDistrict) return false
       return true
@@ -608,8 +637,9 @@ export default function CultivationPage({ role }: { role: string }) {
 
   // Filtered harvests for Admin / Officer
   const filteredHarvests = useMemo(() => {
+    if (!Array.isArray(harvests)) return []
     return harvests.filter((h) => {
-      if (filterSeason && h.season.toLowerCase() !== filterSeason.toLowerCase()) return false
+      if (filterSeason && (h.season || '').toLowerCase() !== filterSeason.toLowerCase()) return false
       if (filterProvince && h.province !== filterProvince) return false
       if (filterDistrict && h.district !== filterDistrict) return false
       return true
@@ -618,6 +648,7 @@ export default function CultivationPage({ role }: { role: string }) {
 
   // Average Forecast Accuracy for filtered harvests
   const averageAccuracy = useMemo(() => {
+    if (!Array.isArray(filteredHarvests)) return null
     const withAcc = filteredHarvests.filter((h) => h.accuracyPercent !== null && h.accuracyPercent !== undefined)
     if (withAcc.length === 0) return null
     return withAcc.reduce((sum, h) => sum + (h.accuracyPercent ?? 0), 0) / withAcc.length
@@ -706,7 +737,7 @@ export default function CultivationPage({ role }: { role: string }) {
                         >
                           {myFields.map((f) => (
                             <option key={f.id} value={f.id}>
-                              {f.name} ({f.farmName} · {f.areaHectares.toFixed(2)} ha · {f.verificationStatus})
+                              {f.name} ({f.farmName} · {safeNum(f.areaHectares).toFixed(2)} ha · {f.verificationStatus || 'Pending'})
                             </option>
                           ))}
                         </select>
@@ -790,7 +821,7 @@ export default function CultivationPage({ role }: { role: string }) {
                     <div className="cultivation-preview-strip">
                       <div className="preview-item">
                         <span>Field Area</span>
-                        <strong>{selectedField ? `${selectedField.areaHectares.toFixed(2)} ha` : '—'}</strong>
+                        <strong>{selectedField ? `${safeNum(selectedField.areaHectares).toFixed(2)} ha` : '—'}</strong>
                       </div>
                       <div className="preview-item">
                         <span>Maturity Window</span>
@@ -842,7 +873,7 @@ export default function CultivationPage({ role }: { role: string }) {
                                 <td>
                                   <strong className="table-primary">{item.fieldName}</strong>
                                   <span className="table-secondary">
-                                    {item.farmName} · {item.areaHectares.toFixed(2)} ha
+                                    {item.farmName} · {safeNum(item.areaHectares).toFixed(2)} ha
                                   </span>
                                 </td>
                                 <td>
@@ -1126,7 +1157,7 @@ export default function CultivationPage({ role }: { role: string }) {
                           return (
                             <tr key={item.id}>
                               <td>
-                                <strong className="table-primary">{item.farmerName}</strong>
+                                <strong className="table-primary">{item.farmerName || 'Farmer'}</strong>
                               </td>
                               <td>
                                 <strong className="table-primary">{item.fieldName}</strong>
@@ -1137,7 +1168,7 @@ export default function CultivationPage({ role }: { role: string }) {
                                 <span className="table-secondary">{item.province || '—'}</span>
                               </td>
                               <td>
-                                <strong>{item.areaHectares.toFixed(2)} ha</strong>
+                                <strong>{safeNum(item.areaHectares).toFixed(2)} ha</strong>
                               </td>
                               <td>
                                 <strong className="table-primary">{item.riceVarietyName}</strong>
@@ -1310,7 +1341,7 @@ export default function CultivationPage({ role }: { role: string }) {
                       <div className="cultivation-preview-strip">
                         <div className="preview-item">
                           <span>Field & Area</span>
-                          <strong>{selectedHarvestCultivation.fieldName} ({selectedHarvestCultivation.areaHectares.toFixed(2)} ha)</strong>
+                          <strong>{selectedHarvestCultivation.fieldName} ({safeNum(selectedHarvestCultivation.areaHectares).toFixed(2)} ha)</strong>
                         </div>
                         <div className="preview-item">
                           <span>Variety & Cycle</span>
@@ -1446,18 +1477,18 @@ export default function CultivationPage({ role }: { role: string }) {
                     <p className="extension-empty">No stored paddy stock recorded yet. Log a harvest to automatically credit inventory.</p>
                   ) : (
                     <div className="stock-summary-grid">
-                      {stocks.map((st) => (
-                        <div className="stock-card" key={st.id}>
+                      {stocks.map((st, idx) => (
+                        <div className="stock-card" key={st.id || `st-${idx}`}>
                           <div className="stock-card-head">
-                            <strong className="table-primary">{st.riceVarietyName}</strong>
-                            <span className="code-chip">{st.commodityStage}</span>
+                            <strong className="table-primary">{st.riceVarietyName || 'Paddy'}</strong>
+                            <span className="code-chip">{st.commodityStage || 'Paddy'}</span>
                           </div>
                           <div className="stock-card-quantity">
-                            <strong>{st.quantityKg.toLocaleString()}</strong>
-                            <small>kg ({(st.quantityKg / 1000).toFixed(2)} MT)</small>
+                            <strong>{safeNum(st.quantityKg).toLocaleString()}</strong>
+                            <small>kg ({(safeNum(st.quantityKg) / 1000).toFixed(2)} MT)</small>
                           </div>
                           <div className="stock-card-meta">
-                            <span>Location: <strong>{st.location}</strong> · Grade: <strong>{st.grade}</strong></span>
+                            <span>Location: <strong>{st.location || st.district || 'National'}</strong> · Grade: <strong>{st.grade || 'Standard'}</strong></span>
                             <span>As of: {formatDate(st.asOfDate)}</span>
                           </div>
                         </div>
@@ -1499,48 +1530,54 @@ export default function CultivationPage({ role }: { role: string }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {harvests.map((item) => (
-                          <tr key={item.id}>
-                            <td>
-                              <strong className="table-primary">{item.fieldName}</strong>
-                              <span className="table-secondary">{item.farmName} · {item.areaHectares.toFixed(2)} ha</span>
-                            </td>
-                            <td>
-                              <strong className="table-primary">{item.riceVarietyName}</strong>
-                              <span className="table-secondary">{item.season} ({item.varietyCode})</span>
-                            </td>
-                            <td>{formatDate(item.harvestDate)}</td>
-                            <td>
-                              {item.forecastedYieldKg !== null
-                                ? <strong>{item.forecastedYieldKg.toLocaleString()} kg</strong>
-                                : '—'}
-                            </td>
-                            <td>
-                              <strong style={{ color: '#166534', fontSize: '13px' }}>
-                                {item.actualPaddyKg.toLocaleString()} kg
-                              </strong>
-                            </td>
-                            <td>
-                              {item.varianceKg !== null ? (
-                                <span className={item.varianceKg >= 0 ? 'variance-positive' : 'variance-negative'}>
-                                  {item.varianceKg >= 0 ? `+${item.varianceKg.toLocaleString()}` : item.varianceKg.toLocaleString()} kg
-                                  {item.variancePercent !== null && ` (${item.variancePercent >= 0 ? '+' : ''}${item.variancePercent.toFixed(1)}%)`}
-                                </span>
-                              ) : '—'}
-                            </td>
-                            <td>
-                              {item.accuracyPercent !== null ? (
-                                <span className={`accuracy-badge ${getAccuracyClass(item.accuracyPercent)}`}>
-                                  {item.accuracyPercent.toFixed(1)}%
-                                </span>
-                              ) : (
-                                <span className="status-badge status-neutral">N/A</span>
-                              )}
-                            </td>
-                            <td>{item.quality || 'Standard'}</td>
-                            <td>{item.evidenceReference || '—'}</td>
-                          </tr>
-                        ))}
+                        {harvests.map((item, idx) => {
+                          const actualKg = safeNum(item.actualHarvestKg ?? item.actualPaddyKg)
+                          const forecastKg = item.forecastedYieldKg !== null && item.forecastedYieldKg !== undefined ? safeNum(item.forecastedYieldKg) : null
+                          const varianceKg = item.varianceKg !== null && item.varianceKg !== undefined ? safeNum(item.varianceKg) : null
+                          const accuracy = item.accuracyPercent !== null && item.accuracyPercent !== undefined ? safeNum(item.accuracyPercent) : null
+                          const harvestDateStr = item.actualHarvestDate || item.harvestDate
+
+                          return (
+                            <tr key={item.harvestId || item.id || `h-${idx}`}>
+                              <td>
+                                <strong className="table-primary">{item.fieldName || 'Field'}</strong>
+                                <span className="table-secondary">{item.farmName || 'Farm'} · {safeNum(item.areaHectares).toFixed(2)} ha</span>
+                              </td>
+                              <td>
+                                <strong className="table-primary">{item.riceVarietyName || 'Rice Variety'}</strong>
+                                <span className="table-secondary">{item.season || 'Season'} {item.varietyCode ? `(${item.varietyCode})` : ''}</span>
+                              </td>
+                              <td>{formatDate(harvestDateStr)}</td>
+                              <td>
+                                {forecastKg !== null ? <strong>{forecastKg.toLocaleString()} kg</strong> : '—'}
+                              </td>
+                              <td>
+                                <strong style={{ color: '#166534', fontSize: '13px' }}>
+                                  {actualKg.toLocaleString()} kg
+                                </strong>
+                              </td>
+                              <td>
+                                {varianceKg !== null ? (
+                                  <span className={varianceKg >= 0 ? 'variance-positive' : 'variance-negative'}>
+                                    {varianceKg >= 0 ? `+${varianceKg.toLocaleString()}` : varianceKg.toLocaleString()} kg
+                                    {item.variancePercent !== null && item.variancePercent !== undefined && ` (${safeNum(item.variancePercent) >= 0 ? '+' : ''}${safeNum(item.variancePercent).toFixed(1)}%)`}
+                                  </span>
+                                ) : '—'}
+                              </td>
+                              <td>
+                                {accuracy !== null ? (
+                                  <span className={`accuracy-badge ${getAccuracyClass(accuracy)}`}>
+                                    {accuracy.toFixed(1)}%
+                                  </span>
+                                ) : (
+                                  <span className="status-badge status-neutral">N/A</span>
+                                )}
+                              </td>
+                              <td>{item.qualityGrade || item.quality || 'Standard'}</td>
+                              <td>{item.notes || item.evidenceReference || '—'}</td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1652,50 +1689,56 @@ export default function CultivationPage({ role }: { role: string }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredHarvests.map((item) => (
-                          <tr key={item.id}>
-                            <td>
-                              <strong className="table-primary">{item.farmerName}</strong>
-                            </td>
-                            <td>
-                              <strong className="table-primary">{item.fieldName}</strong>
-                              <span className="table-secondary">{item.district || '—'} ({item.areaHectares.toFixed(2)} ha)</span>
-                            </td>
-                            <td>
-                              <strong className="table-primary">{item.riceVarietyName}</strong>
-                              <span className="table-secondary">{item.season}</span>
-                            </td>
-                            <td>{formatDate(item.harvestDate)}</td>
-                            <td>
-                              {item.forecastedYieldKg !== null
-                                ? `${item.forecastedYieldKg.toLocaleString()} kg`
-                                : '—'}
-                            </td>
-                            <td>
-                              <strong style={{ color: '#166534' }}>
-                                {item.actualPaddyKg.toLocaleString()} kg
-                              </strong>
-                            </td>
-                            <td>
-                              {item.varianceKg !== null ? (
-                                <span className={item.varianceKg >= 0 ? 'variance-positive' : 'variance-negative'}>
-                                  {item.varianceKg >= 0 ? `+${item.varianceKg.toLocaleString()}` : item.varianceKg.toLocaleString()} kg
-                                  {item.variancePercent !== null && ` (${item.variancePercent >= 0 ? '+' : ''}${item.variancePercent.toFixed(1)}%)`}
-                                </span>
-                              ) : '—'}
-                            </td>
-                            <td>
-                              {item.accuracyPercent !== null ? (
-                                <span className={`accuracy-badge ${getAccuracyClass(item.accuracyPercent)}`}>
-                                  {item.accuracyPercent.toFixed(1)}%
-                                </span>
-                              ) : (
-                                <span className="status-badge status-neutral">N/A</span>
-                              )}
-                            </td>
-                            <td>{item.quality || 'Standard'}</td>
-                          </tr>
-                        ))}
+                        {filteredHarvests.map((item, idx) => {
+                          const actualKg = safeNum(item.actualHarvestKg ?? item.actualPaddyKg)
+                          const forecastKg = item.forecastedYieldKg !== null && item.forecastedYieldKg !== undefined ? safeNum(item.forecastedYieldKg) : null
+                          const varianceKg = item.varianceKg !== null && item.varianceKg !== undefined ? safeNum(item.varianceKg) : null
+                          const accuracy = item.accuracyPercent !== null && item.accuracyPercent !== undefined ? safeNum(item.accuracyPercent) : null
+                          const harvestDateStr = item.actualHarvestDate || item.harvestDate
+
+                          return (
+                            <tr key={item.harvestId || item.id || `h-${idx}`}>
+                              <td>
+                                <strong className="table-primary">{item.farmerName || 'Farmer'}</strong>
+                              </td>
+                              <td>
+                                <strong className="table-primary">{item.fieldName}</strong>
+                                <span className="table-secondary">{item.district || '—'} ({safeNum(item.areaHectares).toFixed(2)} ha)</span>
+                              </td>
+                              <td>
+                                <strong className="table-primary">{item.riceVarietyName}</strong>
+                                <span className="table-secondary">{item.season}</span>
+                              </td>
+                              <td>{formatDate(harvestDateStr)}</td>
+                              <td>
+                                {forecastKg !== null ? `${forecastKg.toLocaleString()} kg` : '—'}
+                              </td>
+                              <td>
+                                <strong style={{ color: '#166534' }}>
+                                  {actualKg.toLocaleString()} kg
+                                </strong>
+                              </td>
+                              <td>
+                                {varianceKg !== null ? (
+                                  <span className={varianceKg >= 0 ? 'variance-positive' : 'variance-negative'}>
+                                    {varianceKg >= 0 ? `+${varianceKg.toLocaleString()}` : varianceKg.toLocaleString()} kg
+                                    {item.variancePercent !== null && item.variancePercent !== undefined && ` (${safeNum(item.variancePercent) >= 0 ? '+' : ''}${safeNum(item.variancePercent).toFixed(1)}%)`}
+                                  </span>
+                                ) : '—'}
+                              </td>
+                              <td>
+                                {accuracy !== null ? (
+                                  <span className={`accuracy-badge ${getAccuracyClass(accuracy)}`}>
+                                    {accuracy.toFixed(1)}%
+                                  </span>
+                                ) : (
+                                  <span className="status-badge status-neutral">N/A</span>
+                                )}
+                              </td>
+                              <td>{item.qualityGrade || item.quality || 'Standard'}</td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1710,7 +1753,7 @@ export default function CultivationPage({ role }: { role: string }) {
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <span className="record-count">
-                      {(stocks.reduce((acc, s) => acc + s.quantityKg, 0) / 1000).toFixed(2)} MT Total Stock
+                      {(stocks.reduce((acc, s) => acc + safeNum(s.quantityKg), 0) / 1000).toFixed(2)} MT Total Stock
                     </span>
                     <button
                       type="button"
@@ -1826,19 +1869,19 @@ export default function CultivationPage({ role }: { role: string }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {stocks.map((st) => (
-                          <tr key={st.id}>
-                            <td><strong className="table-primary">{st.location}</strong></td>
+                        {stocks.map((st, idx) => (
+                          <tr key={st.id || `st-row-${idx}`}>
+                            <td><strong className="table-primary">{st.location || st.district || 'National'}</strong></td>
                             <td>{st.farmerName || 'Government / PMB'}</td>
                             <td>
-                              <strong className="table-primary">{st.riceVarietyName}</strong>
-                              <span className="table-secondary">{st.varietyCode}</span>
+                              <strong className="table-primary">{st.riceVarietyName || 'Paddy'}</strong>
+                              <span className="table-secondary">{st.varietyCode || '—'}</span>
                             </td>
-                            <td>{st.commodityStage}</td>
-                            <td>{st.grade}</td>
+                            <td>{st.commodityStage || 'Paddy'}</td>
+                            <td>{st.grade || 'Standard'}</td>
                             <td>
                               <strong style={{ color: '#166534' }}>
-                                {st.quantityKg.toLocaleString()} kg ({(st.quantityKg / 1000).toFixed(2)} MT)
+                                {safeNum(st.quantityKg).toLocaleString()} kg ({(safeNum(st.quantityKg) / 1000).toFixed(2)} MT)
                               </strong>
                             </td>
                             <td>{formatDate(st.asOfDate)}</td>

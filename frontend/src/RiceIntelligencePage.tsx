@@ -354,14 +354,16 @@ export default function RiceIntelligencePage({ role }: { role: string }) {
           </div>
 
           <div className="toolbar-button-group">
-            <button
-              type="button"
-              className="extension-secondary-button"
-              onClick={handleRecalculate}
-              disabled={recalculating || loading}
-            >
-              {recalculating ? 'Recalculating…' : isFarmer ? 'Recalculate My Forecasts' : 'Recalculate All Forecasts'}
-            </button>
+            {!isBuyer && (
+              <button
+                type="button"
+                className="extension-secondary-button"
+                onClick={handleRecalculate}
+                disabled={recalculating || loading}
+              >
+                {recalculating ? 'Recalculating…' : isFarmer ? 'Recalculate My Forecasts' : 'Recalculate All Forecasts'}
+              </button>
+            )}
 
             {isAdminOrGov && (
               <button

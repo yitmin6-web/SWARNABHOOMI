@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ErrorInfo, FormEvent, ReactNode } from 'react'
 import './App.css'
 import './FeaturePages.css'
 import AssistantConfigPage from './AssistantConfigPage'
@@ -217,6 +217,66 @@ function initials(name: string) {
     .slice(0, 2)
     .map((part) => part[0].toUpperCase())
     .join('')
+}
+
+interface ErrorBoundaryProps {
+  children: ReactNode
+  onReset?: () => void
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('ErrorBoundary caught rendering error:', error, errorInfo)
+  }
+
+  handleReset = () => {
+    this.setState({ hasError: false, error: null })
+    if (this.props.onReset) {
+      this.props.onReset()
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <section className="extension-card error-boundary-card" style={{ padding: '24px', margin: '16px 0', borderColor: '#fecaca', background: '#fff1f2' }} role="alert">
+          <div className="section-header-compact">
+            <div>
+              <span className="panel-eyebrow" style={{ color: '#b91c1c' }}>APPLICATION VIEW ERROR</span>
+              <h3 style={{ margin: '4px 0 8px', color: '#881337' }}>Something went wrong rendering this view</h3>
+              <p className="form-subtext" style={{ color: '#9f1239' }}>
+                {this.state.error?.message || 'An unexpected rendering error occurred in this view.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="extension-secondary-button"
+              onClick={this.handleReset}
+              style={{ alignSelf: 'flex-start' }}
+            >
+              Reload view
+            </button>
+          </div>
+        </section>
+      )
+    }
+
+    return this.props.children
+  }
 }
 
 function App() {
@@ -542,47 +602,49 @@ function App() {
             </div>}
           </div>
 
-          {section === 'overview' ? (
-            <Overview
-              data={filtered}
-              loading={loading}
-              authUser={authUser}
-              canManageUsers={canManageUsers}
-              onNavigate={setActiveSection}
-              onVerifyField={verifyField}
-            />
-          ) : section === 'prices' ? (
-            <MarketPricesPage />
-          ) : section === 'weather' ? (
-            <WeatherPage />
-          ) : section === 'cultivation' ? (
-            canViewCultivation ? <CultivationPage role={authUser.role} /> : <AccessDenied />
-          ) : section === 'intelligence' ? (
-            <RiceIntelligencePage role={authUser.role} />
-          ) : section === 'field-map' ? (
-            canViewFieldMap ? <FieldMapPage role={authUser.role} /> : <AccessDenied />
-          ) : section === 'assistant' ? (
-            <AssistantPage />
-          ) : section === 'assistant-settings' ? (
-            isSuperAdmin ? <AssistantConfigPage /> : <AccessDenied />
-          ) : section === 'member-details' ? (
-            isSuperAdmin && selectedMemberId
-              ? <MemberDetailsPage key={selectedMemberId} memberId={selectedMemberId} onBack={() => setActiveSection('users')} />
-              : <AccessDenied />
-          ) : (
-            <DataSection
-              section={section}
-              data={filtered}
-              loading={loading}
-              onNavigate={setActiveSection}
-              canManageUsers={canManageUsers}
-              isSuperAdmin={isSuperAdmin}
-              onViewMember={openMemberDetails}
-              onReviewRegistration={(id, approved) => manageUser(`/api/users/${id}/approval`, 'POST', { approved })}
-              onChangeRole={(id, role) => manageUser(`/api/users/${id}/role`, 'PUT', { role })}
-              onVerifyField={verifyField}
-            />
-          )}
+          <ErrorBoundary key={section} onReset={refreshData}>
+            {section === 'overview' ? (
+              <Overview
+                data={filtered}
+                loading={loading}
+                authUser={authUser}
+                canManageUsers={canManageUsers}
+                onNavigate={setActiveSection}
+                onVerifyField={verifyField}
+              />
+            ) : section === 'prices' ? (
+              <MarketPricesPage />
+            ) : section === 'weather' ? (
+              <WeatherPage />
+            ) : section === 'cultivation' ? (
+              canViewCultivation ? <CultivationPage role={authUser.role} /> : <AccessDenied />
+            ) : section === 'intelligence' ? (
+              <RiceIntelligencePage role={authUser.role} />
+            ) : section === 'field-map' ? (
+              canViewFieldMap ? <FieldMapPage role={authUser.role} /> : <AccessDenied />
+            ) : section === 'assistant' ? (
+              <AssistantPage />
+            ) : section === 'assistant-settings' ? (
+              isSuperAdmin ? <AssistantConfigPage /> : <AccessDenied />
+            ) : section === 'member-details' ? (
+              isSuperAdmin && selectedMemberId
+                ? <MemberDetailsPage key={selectedMemberId} memberId={selectedMemberId} onBack={() => setActiveSection('users')} />
+                : <AccessDenied />
+            ) : (
+              <DataSection
+                section={section}
+                data={filtered}
+                loading={loading}
+                onNavigate={setActiveSection}
+                canManageUsers={canManageUsers}
+                isSuperAdmin={isSuperAdmin}
+                onViewMember={openMemberDetails}
+                onReviewRegistration={(id, approved) => manageUser(`/api/users/${id}/approval`, 'POST', { approved })}
+                onChangeRole={(id, role) => manageUser(`/api/users/${id}/role`, 'PUT', { role })}
+                onVerifyField={verifyField}
+              />
+            )}
+          </ErrorBoundary>
 
           <footer className="page-footer">
             <span>© 2027 Swarnabhoomi · Growing together</span>
