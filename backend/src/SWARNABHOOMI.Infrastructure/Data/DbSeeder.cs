@@ -8,6 +8,48 @@ public static class DbSeeder
 {
     public static void Seed(SWARNABHOOMIContext context)
     {
+        if (!context.Seasons.Any())
+        {
+            context.Seasons.AddRange(
+                new Season
+                {
+                    Name = "2026/2027 Maha",
+                    Year = 2026,
+                    District = "National",
+                    PlantingStart = new DateOnly(2026, 9, 1),
+                    PlantingEnd = new DateOnly(2027, 2, 28),
+                    Status = "Active",
+                    ApprovedBy = "Department of Agriculture",
+                    ApprovedAt = new DateTime(2026, 8, 15, 0, 0, 0, DateTimeKind.Utc)
+                },
+                new Season
+                {
+                    Name = "2027 Yala",
+                    Year = 2027,
+                    District = "National",
+                    PlantingStart = new DateOnly(2027, 3, 1),
+                    PlantingEnd = new DateOnly(2027, 8, 31),
+                    Status = "Active",
+                    ApprovedBy = "Department of Agriculture",
+                    ApprovedAt = new DateTime(2027, 2, 1, 0, 0, 0, DateTimeKind.Utc)
+                },
+                new Season
+                {
+                    Name = "2026 Yala",
+                    Year = 2026,
+                    District = "National",
+                    PlantingStart = new DateOnly(2026, 3, 1),
+                    PlantingEnd = new DateOnly(2026, 8, 31),
+                    Status = "Closed",
+                    ApprovedBy = "Department of Agriculture",
+                    ApprovedAt = new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc),
+                    ClosedAt = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc),
+                    ClosureReason = "Season completed"
+                }
+            );
+            context.SaveChanges();
+        }
+
         if (context.Users.Any())
         {
             return;

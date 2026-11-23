@@ -1265,3 +1265,224 @@
     justify-self: end;
   }
 }
+
+/* Cultivation & Season Management */
+.cultivation-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.cultivation-hero-card {
+  margin-bottom: 4px;
+}
+
+.cultivation-farmer-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 420px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.cultivation-entry-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-row-2col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.form-subtext {
+  font-size: 0.78rem;
+  color: #64748b;
+  margin-top: -6px;
+  line-height: 1.35;
+}
+
+.field-mapping-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #166534;
+  line-height: 1.4;
+}
+
+.field-mapping-callout .callout-icon {
+  font-size: 1.15rem;
+  flex-shrink: 0;
+}
+
+.cultivation-preview-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 4px;
+}
+
+.preview-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.76rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.preview-item strong {
+  font-size: 0.92rem;
+  color: #1e293b;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.preview-item.highlight strong {
+  color: #15803d;
+}
+
+.cultivation-my-cycles {
+  min-height: 200px;
+}
+
+.section-header-compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.section-header-compact h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.stage-select-compact {
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  border: 1px solid #cbd5e1;
+  background-color: #ffffff;
+  color: #1e293b;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stage-select-compact:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.15);
+}
+
+.stage-select-compact:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.season-management-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.season-mgmt-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.season-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.season-list-card {
+  min-height: 200px;
+}
+
+.cultivation-monitor-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cultivation-filter-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.cultivation-filter-strip label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: #475569;
+  font-weight: 500;
+}
+
+.cultivation-filter-strip select,
+.cultivation-filter-strip input {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  font-size: 0.85rem;
+  background: #ffffff;
+}
+
+@media (max-width: 1024px) {
+  .cultivation-farmer-grid,
+  .season-mgmt-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .form-row-2col,
+  .cultivation-preview-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cultivation-filter-strip {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

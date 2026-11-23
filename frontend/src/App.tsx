@@ -4,6 +4,7 @@ import './App.css'
 import './FeaturePages.css'
 import AssistantConfigPage from './AssistantConfigPage'
 import AssistantPage from './AssistantPage'
+import CultivationPage from './CultivationPage'
 import FieldMapPage from './FieldMapPage'
 import MarketPricesPage from './MarketPricesPage'
 import MemberDetailsPage from './MemberDetailsPage'
@@ -14,7 +15,7 @@ import {
   getProvinceForDistrict,
 } from './sriLankaLocations'
 
-type Section = 'overview' | 'farms' | 'demands' | 'prices' | 'weather' | 'varieties' | 'users' | 'field-map' | 'assistant' | 'assistant-settings' | 'member-details'
+type Section = 'overview' | 'farms' | 'cultivation' | 'demands' | 'prices' | 'weather' | 'varieties' | 'users' | 'field-map' | 'assistant' | 'assistant-settings' | 'member-details'
 type DataSectionId = 'farms' | 'demands' | 'varieties' | 'users'
 
 type DashboardSummary = {
@@ -116,6 +117,7 @@ type AppData = {
 const navigation: { id: Section; label: string; icon: string }[] = [
   { id: 'overview', label: 'Overview', icon: 'grid' },
   { id: 'farms', label: 'Farms & fields', icon: 'farm' },
+  { id: 'cultivation', label: 'Cultivation', icon: 'calendar' },
   { id: 'demands', label: 'Demand board', icon: 'layers' },
   { id: 'prices', label: 'Market prices', icon: 'chart' },
   { id: 'weather', label: 'Weather', icon: 'sun' },
@@ -127,6 +129,7 @@ const navigation: { id: Section; label: string; icon: string }[] = [
 const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
   overview: { title: 'Overview', subtitle: 'A clear view of your rice ecosystem.' },
   farms: { title: 'Farms & fields', subtitle: 'Explore registered farms across Sri Lanka.' },
+  cultivation: { title: 'Cultivation cycles', subtitle: 'Seasonal crop planning, sowing dates, and growth stages.' },
   demands: { title: 'Demand board', subtitle: 'Keep track of buyer demand and upcoming seasons.' },
   prices: { title: 'Market prices', subtitle: 'The latest official daily rice prices for selected markets.' },
   weather: { title: 'Weather', subtitle: 'Current model conditions across all 25 Sri Lankan districts.' },
@@ -378,7 +381,7 @@ function App() {
   }
 
   const currentTitle = sectionTitles[section]
-  const isExtensionSection = ['field-map', 'assistant', 'assistant-settings', 'member-details', 'prices', 'weather'].includes(section)
+  const isExtensionSection = ['field-map', 'cultivation', 'assistant', 'assistant-settings', 'member-details', 'prices', 'weather'].includes(section)
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query || !data) return data
@@ -408,6 +411,7 @@ function App() {
   const canManageUsers = authUser.role === 'SuperAdmin' || authUser.role === 'Developer'
   const isSuperAdmin = authUser.role === 'SuperAdmin'
   const canViewFieldMap = ['Farmer', 'Buyer', 'Government', 'Officer', 'SuperAdmin'].includes(authUser.role)
+  const canViewCultivation = authUser.role !== 'Buyer'
 
   return (
     <div className="app-shell">
@@ -426,7 +430,8 @@ function App() {
         <div className="nav-label">WORKSPACE</div>
         <nav className="side-nav" aria-label="Main navigation">
           {navigation.map((item) => (
-            (item.id !== 'field-map' || canViewFieldMap) && (
+            (item.id !== 'field-map' || canViewFieldMap) &&
+            (item.id !== 'cultivation' || canViewCultivation) && (
             <button
               className={`nav-item ${section === item.id ? 'nav-item-active' : ''}`}
               key={item.id}
@@ -547,6 +552,8 @@ function App() {
             <MarketPricesPage />
           ) : section === 'weather' ? (
             <WeatherPage />
+          ) : section === 'cultivation' ? (
+            canViewCultivation ? <CultivationPage role={authUser.role} /> : <AccessDenied />
           ) : section === 'field-map' ? (
             canViewFieldMap ? <FieldMapPage role={authUser.role} /> : <AccessDenied />
           ) : section === 'assistant' ? (
@@ -1046,8 +1053,8 @@ function FarmerOverview({
       <div className="bottom-grid">
         <section className="season-strip">
           <div className="season-icon-large"><Icon name="calendar" size={21} /></div>
-          <div><span className="panel-eyebrow">SEASON AT A GLANCE</span><h3>Yala 2027 planning is underway</h3><p>Review buyer demands and optimize your seasonal planting schedule.</p></div>
-          <button className="text-link" onClick={() => onNavigate('demands')}>View demand <Icon name="arrow" size={15} /></button>
+          <div><span className="panel-eyebrow">SEASON AT A GLANCE</span><h3>Yala 2027 planning is underway</h3><p>Manage your cultivation cycles, sowing dates, and growth stages.</p></div>
+          <button className="text-link" onClick={() => onNavigate('cultivation')}>Manage cultivation <Icon name="arrow" size={15} /></button>
         </section>
         <section className="weather-card">
           <div className="weather-heading"><span className="panel-eyebrow">LOCAL WEATHER</span><Icon name="sun" size={19} /></div>
