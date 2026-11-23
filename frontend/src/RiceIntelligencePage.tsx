@@ -92,6 +92,8 @@ type DistrictRollupItem = {
   status: string
   cultivatedHectares: number
   fieldsCount: number
+  availableStockMt: number
+  actualHarvestedMt: number
 }
 
 type MonthlyScheduleItem = {
@@ -109,6 +111,8 @@ type SummaryTotalsItem = {
   totalCultivatedAreaHectares: number
   totalFieldsCount: number
   verifiedSharePercentage: number
+  totalAvailableStockMt: number
+  averageForecastAccuracyPercent: number | null
 }
 
 type RiceIntelligenceOverview = {
@@ -673,6 +677,14 @@ export default function RiceIntelligencePage({ role }: { role: string }) {
             <span className="kpi-foot">{isFarmer ? 'Across your registered fields' : 'Projected harvest yield'}</span>
           </div>
 
+          <div className="intelligence-kpi-card">
+            <span className="kpi-label">AVAILABLE PADDY STOCK</span>
+            <strong className="kpi-value">
+              {(data.summaryTotals.totalAvailableStockMt ?? 0).toLocaleString()} <small>MT</small>
+            </strong>
+            <span className="kpi-foot">{isFarmer ? 'In your stored inventory' : 'Live post-harvest stored inventory'}</span>
+          </div>
+
           {!isFarmer && (
             <div className="intelligence-kpi-card">
               <span className="kpi-label">ACTIVE BUYER DEMAND</span>
@@ -705,6 +717,14 @@ export default function RiceIntelligencePage({ role }: { role: string }) {
             <strong className="kpi-value">{data.summaryTotals.verifiedSharePercentage}%</strong>
             <span className="kpi-foot">Ground-verified GIS acreage</span>
           </div>
+
+          {data.summaryTotals.averageForecastAccuracyPercent !== null && data.summaryTotals.averageForecastAccuracyPercent !== undefined && (
+            <div className="intelligence-kpi-card">
+              <span className="kpi-label">YIELD MODEL ACCURACY</span>
+              <strong className="kpi-value">{data.summaryTotals.averageForecastAccuracyPercent.toFixed(1)}%</strong>
+              <span className="kpi-foot">Average forecast vs. actual harvest fidelity</span>
+            </div>
+          )}
         </section>
       )}
 
@@ -954,6 +974,8 @@ export default function RiceIntelligencePage({ role }: { role: string }) {
                       <th>FIELDS</th>
                       <th>FORECASTED SUPPLY</th>
                       <th>GROUND-VERIFIED</th>
+                      <th>AVAILABLE STOCK</th>
+                      <th>ACTUAL HARVESTED</th>
                       <th>ACTIVE DEMAND</th>
                       <th>SUPPLY BALANCE</th>
                       <th>STATUS</th>
@@ -968,6 +990,8 @@ export default function RiceIntelligencePage({ role }: { role: string }) {
                         <td>{r.fieldsCount}</td>
                         <td><strong>{r.forecastedSupplyMt.toLocaleString()} MT</strong></td>
                         <td>{r.verifiedSupplyMt.toLocaleString()} MT</td>
+                        <td><strong style={{ color: '#166534' }}>{(r.availableStockMt ?? 0).toFixed(2)} MT</strong></td>
+                        <td>{(r.actualHarvestedMt ?? 0).toFixed(2)} MT</td>
                         <td>{r.activeDemandMt.toLocaleString()} MT</td>
                         <td>
                           <strong>

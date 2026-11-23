@@ -10,6 +10,7 @@ using SWARNABHOOMI.Core.Enums;
 using SWARNABHOOMI.Api.Authentication;
 using SWARNABHOOMI.Api.Cultivation;
 using SWARNABHOOMI.Api.FieldMap;
+using SWARNABHOOMI.Api.HarvestAndStock;
 using SWARNABHOOMI.Api.Intelligence;
 using SWARNABHOOMI.Api.LiveData;
 using SWARNABHOOMI.Api.Members;
@@ -44,6 +45,7 @@ builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IDashboardOverviewService, DashboardOverviewService>();
 builder.Services.AddScoped<IRiceIntelligenceService, RiceIntelligenceService>();
 builder.Services.AddScoped<ICultivationService, CultivationService>();
+builder.Services.AddScoped<IHarvestAndStockService, HarvestAndStockService>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -154,6 +156,7 @@ app.MapAuthEndpoints();
 app.MapFieldMapEndpoints();
 app.MapCultivationEndpoints();
 app.MapRiceIntelligenceEndpoints();
+app.MapHarvestAndStockEndpoints();
 app.MapAssistantEndpoints();
 app.MapMemberDetailsEndpoints();
 

@@ -100,7 +100,9 @@ public sealed record DistrictSupplyRollupDto(
     decimal SurplusOrDeficitMt,
     string Status,
     decimal CultivatedHectares,
-    int FieldsCount);
+    int FieldsCount,
+    decimal AvailableStockMt = 0,
+    decimal ActualHarvestedMt = 0);
 
 public sealed record MonthlyHarvestScheduleDto(
     string Month,
@@ -115,7 +117,9 @@ public sealed record IntelligenceSummaryTotalsDto(
     decimal NetSurplusOrDeficitMt,
     decimal TotalCultivatedAreaHectares,
     int TotalFieldsCount,
-    decimal VerifiedSharePercentage);
+    decimal VerifiedSharePercentage,
+    decimal TotalAvailableStockMt = 0,
+    decimal AverageForecastAccuracyPercent = 0);
 
 public sealed record IntelligenceQueryFilter(
     Guid? SeasonId = null,
@@ -551,6 +555,61 @@ public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntel
 
         var activeDemands = await demandQuery.ToListAsync(cancellationToken);
 
+        // Fetch available post-harvest stocks
+        var stockQuery = db.StockRecords.AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(filter.District))
+        {
+            stockQuery = stockQuery.Where(s => s.Location.Contains(filter.District.Trim()));
+        }
+        if (filter.VarietyId.HasValue && filter.VarietyId.Value != Guid.Empty)
+        {
+            stockQuery = stockQuery.Where(s => s.RiceVarietyId == filter.VarietyId.Value);
+        }
+        var allStocks = await stockQuery.ToListAsync(cancellationToken);
+
+        var districtStockMap = allStocks
+            .GroupBy(s => s.Location)
+            .ToDictionary(g => g.Key, g => g.Sum(s => s.Quantity));
+
+        // Fetch actual harvests
+        var harvestQuery = db.HarvestRecords
+            .Include(hr => hr.CultivationRecord)
+                .ThenInclude(cr => cr.Field)
+                    .ThenInclude(f => f.Farm)
+            .Include(hr => hr.CultivationRecord)
+                .ThenInclude(cr => cr.HarvestForecasts)
+            .AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(filter.District))
+        {
+            harvestQuery = harvestQuery.Where(hr => hr.CultivationRecord.Field.Farm.District == filter.District.Trim());
+        }
+        if (filter.VarietyId.HasValue && filter.VarietyId.Value != Guid.Empty)
+        {
+            harvestQuery = harvestQuery.Where(hr => hr.CultivationRecord.RiceVarietyId == filter.VarietyId.Value);
+        }
+        var allHarvests = await harvestQuery.ToListAsync(cancellationToken);
+
+        var districtHarvestMap = allHarvests
+            .Where(hr => !string.IsNullOrEmpty(hr.CultivationRecord.Field.Farm.District))
+            .GroupBy(hr => hr.CultivationRecord.Field.Farm.District!)
+            .ToDictionary(g => g.Key, g => g.Sum(hr => hr.ActualPaddyQuantityKg));
+
+        decimal avgAccuracyPercent = 0;
+        var validAccuracyList = allHarvests
+            .Select(hr =>
+            {
+                var f = hr.CultivationRecord.HarvestForecasts.OrderByDescending(fc => fc.CreatedAt).FirstOrDefault();
+                var fKg = f?.PredictedPaddyQuantityKg ?? (hr.CultivationRecord.AreaHectares * 4500m);
+                return fKg > 0 ? Math.Max(0, 100m - Math.Abs((hr.ActualPaddyQuantityKg - fKg) / fKg * 100m)) : 0;
+            })
+            .ToList();
+
+        if (validAccuracyList.Count > 0)
+        {
+            avgAccuracyPercent = Math.Round(validAccuracyList.Average(), 1);
+        }
+
         // 2. Build district rollups (for Buyer, Officer, Admin/Gov/Dev)
         var districtDemandMap = activeDemands
             .GroupBy(d => d.District)
@@ -606,6 +665,11 @@ public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntel
                     ? "Deficit"
                     : "Balanced";
 
+            districtStockMap.TryGetValue(group.Key.District, out var stockKg);
+            districtHarvestMap.TryGetValue(group.Key.District, out var harvestedKg);
+            var availableStockMt = Math.Round(stockKg / 1000m, 3);
+            var actualHarvestedMt = Math.Round(harvestedKg / 1000m, 3);
+
             districtRollupList.Add(new DistrictSupplyRollupDto(
                 group.Key.District,
                 group.Key.Province,
@@ -616,7 +680,9 @@ public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntel
                 surplusOrDeficitMt,
                 status,
                 Math.Round(areaHectares, 2),
-                group.Select(c => c.FieldId).Distinct().Count()
+                group.Select(c => c.FieldId).Distinct().Count(),
+                availableStockMt,
+                actualHarvestedMt
             ));
         }
 
@@ -714,6 +780,20 @@ public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntel
                 .Where(f => f.VerificationStatus == "Verified")
                 .Sum(f => f.ForecastedYieldMt);
 
+            var farmerStockKg = allStocks.Where(s => s.CreatedBy == userId.ToString()).Sum(s => s.Quantity);
+            var farmerHarvests = allHarvests.Where(hr => hr.CultivationRecord.FarmerId == userId || hr.CultivationRecord.Field.Farm.UserId == userId).ToList();
+            decimal farmerAvgAccuracy = 0;
+            if (farmerHarvests.Count > 0)
+            {
+                var fAccList = farmerHarvests.Select(hr =>
+                {
+                    var f = hr.CultivationRecord.HarvestForecasts.OrderByDescending(fc => fc.CreatedAt).FirstOrDefault();
+                    var fKg = f?.PredictedPaddyQuantityKg ?? (hr.CultivationRecord.AreaHectares * 4500m);
+                    return fKg > 0 ? Math.Max(0, 100m - Math.Abs((hr.ActualPaddyQuantityKg - fKg) / fKg * 100m)) : 0;
+                }).ToList();
+                farmerAvgAccuracy = fAccList.Count > 0 ? Math.Round(fAccList.Average(), 1) : 0;
+            }
+
             var summary = new IntelligenceSummaryTotalsDto(
                 TotalForecastedMt: totalFarmerYieldMt,
                 TotalActiveDemandMt: 0,
@@ -722,7 +802,9 @@ public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntel
                 TotalFieldsCount: fieldInputs.Count,
                 VerifiedSharePercentage: totalFarmerYieldMt > 0
                     ? Math.Round((verifiedFarmerYieldMt / totalFarmerYieldMt) * 100m, 1)
-                    : 0
+                    : 0,
+                TotalAvailableStockMt: Math.Round(farmerStockKg / 1000m, 3),
+                AverageForecastAccuracyPercent: farmerAvgAccuracy
             );
 
             // Hide network-wide district rollups from Farmer
@@ -752,7 +834,9 @@ public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntel
                 TotalFieldsCount: totalFields,
                 VerifiedSharePercentage: totalForecastedMt > 0
                     ? Math.Round((verifiedSupplyMt / totalForecastedMt) * 100m, 1)
-                    : 0
+                    : 0,
+                TotalAvailableStockMt: Math.Round(allStocks.Sum(s => s.Quantity) / 1000m, 3),
+                AverageForecastAccuracyPercent: avgAccuracyPercent
             );
 
             return new RiceIntelligenceOverviewDto(
@@ -806,7 +890,9 @@ public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntel
                 TotalFieldsCount: totalFields,
                 VerifiedSharePercentage: totalForecastedMt > 0
                     ? Math.Round((verifiedSupplyMt / totalForecastedMt) * 100m, 1)
-                    : 0
+                    : 0,
+                TotalAvailableStockMt: Math.Round(allStocks.Sum(s => s.Quantity) / 1000m, 3),
+                AverageForecastAccuracyPercent: avgAccuracyPercent
             );
 
             return new RiceIntelligenceOverviewDto(
@@ -846,7 +932,9 @@ public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntel
                 TotalFieldsCount: totalFields,
                 VerifiedSharePercentage: totalForecastedMt > 0
                     ? Math.Round((verifiedSupplyMt / totalForecastedMt) * 100m, 1)
-                    : 0
+                    : 0,
+                TotalAvailableStockMt: Math.Round(allStocks.Sum(s => s.Quantity) / 1000m, 3),
+                AverageForecastAccuracyPercent: avgAccuracyPercent
             );
 
             return new RiceIntelligenceOverviewDto(
