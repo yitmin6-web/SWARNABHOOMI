@@ -57,7 +57,7 @@ public static class FieldMapEndpoints
             query = query.Where(field =>
                 field.Farm.District != null && districts.Contains(field.Farm.District));
         }
-        else if (role is not ("Government" or "Buyer" or "SuperAdmin"))
+        else if (role is not ("Government" or "Buyer" or "SuperAdmin" or "Developer"))
         {
             return Results.Forbid();
         }
@@ -196,6 +196,10 @@ public static class FieldMapEndpoints
             return Results.BadRequest(new { error = geometryError });
         }
 
+        var areaHectares = request.AreaHectares.HasValue && request.AreaHectares.Value > 0
+            ? Math.Round(request.AreaHectares.Value, 4)
+            : boundary.AreaHectares;
+
         var farm = await db.Farms.SingleOrDefaultAsync(
             candidate => candidate.Id == request.FarmId && candidate.UserId == farmerId,
             cancellationToken);
@@ -204,7 +208,7 @@ public static class FieldMapEndpoints
             return Results.NotFound(new { error = "Farm not found." });
         }
 
-        if (farm.AreaHectares > 0 && boundary.AreaHectares > farm.AreaHectares)
+        if (farm.AreaHectares > 0 && areaHectares > farm.AreaHectares)
         {
             return Results.BadRequest(new { error = "The field boundary area cannot exceed the registered farm area." });
         }
@@ -228,7 +232,7 @@ public static class FieldMapEndpoints
         {
             FarmId = farm.Id,
             Name = request.Name.Trim(),
-            AreaHectares = boundary.AreaHectares,
+            AreaHectares = areaHectares,
             Latitude = boundary.CenterLatitude,
             Longitude = boundary.CenterLongitude,
             BoundaryGeoJson = request.BoundaryGeoJson
@@ -395,7 +399,7 @@ public sealed record CreateFarmRequest(
     string? District,
     string? Province);
 
-public sealed record CreateFieldRequest(Guid FarmId, string Name, string BoundaryGeoJson);
+public sealed record CreateFieldRequest(Guid FarmId, string Name, string BoundaryGeoJson, decimal? AreaHectares = null);
 
 public sealed record ReviewFieldRequest(string Status, string? Notes);
 

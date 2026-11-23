@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SWARNABHOOMI.Infrastructure\SWARNABHOOMI.Infrastructure.csproj" />
+    <ProjectReference Include="..\SWARNABHOOMI.Services\SWARNABHOOMI.Services.csproj" />
   </ItemGroup>
 
 </Project>

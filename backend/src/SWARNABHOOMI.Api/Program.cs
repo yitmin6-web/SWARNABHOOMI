@@ -12,6 +12,7 @@ using SWARNABHOOMI.Api.FieldMap;
 using SWARNABHOOMI.Api.LiveData;
 using SWARNABHOOMI.Api.Members;
 using SWARNABHOOMI.Infrastructure.Data;
+using SWARNABHOOMI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,6 +39,7 @@ builder.Services.AddHttpClient("cbsl-prices", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SWARNABHOOMI/1.0");
 });
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+builder.Services.AddScoped<IDashboardOverviewService, DashboardOverviewService>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -151,18 +153,24 @@ app.MapMemberDetailsEndpoints();
 
 var api = app.MapGroup("/api").RequireAuthorization();
 
-api.MapGet("/dashboard", async (SWARNABHOOMIContext db) =>
+api.MapGet("/dashboard", async (
+    ClaimsPrincipal principal,
+    IDashboardOverviewService dashboardService,
+    CancellationToken cancellationToken) =>
 {
-    var summary = new
+    var userIdString = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!Guid.TryParse(userIdString, out var userId))
     {
-        users = await db.Users.CountAsync(user => user.IsActive),
-        farms = await db.Farms.CountAsync(),
-        demandEntries = await db.Demands.CountAsync(),
-        varieties = await db.RiceVarieties.CountAsync(),
-        marketPrices = await db.MarketPriceObservations.CountAsync(),
-        weatherRecords = await db.WeatherObservations.CountAsync()
-    };
+        return Results.Unauthorized();
+    }
 
+    var roleString = principal.FindFirstValue(ClaimTypes.Role);
+    if (!Enum.TryParse<UserRole>(roleString, out var role))
+    {
+        return Results.Forbid();
+    }
+
+    var summary = await dashboardService.GetOverviewAsync(userId, role, cancellationToken);
     return Results.Ok(summary);
 });
 
@@ -315,10 +323,44 @@ api.MapGet("/rice-varieties", async (SWARNABHOOMIContext db) =>
         })
         .ToListAsync()));
 
-api.MapGet("/farms", async (SWARNABHOOMIContext db) =>
-    Results.Ok(await db.Farms
-        .AsNoTracking()
-        .Include(f => f.User)
+api.MapGet("/farms", async (
+    ClaimsPrincipal principal,
+    SWARNABHOOMIContext db,
+    CancellationToken cancellationToken) =>
+{
+    var roleString = principal.FindFirstValue(ClaimTypes.Role);
+    var userIdString = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+    Guid.TryParse(userIdString, out var userId);
+    Enum.TryParse<UserRole>(roleString, out var role);
+
+    var query = db.Farms.AsNoTracking().Include(f => f.User).AsQueryable();
+
+    if (role == UserRole.Farmer)
+    {
+        query = query.Where(f => f.UserId == userId);
+    }
+    else if (role == UserRole.Buyer)
+    {
+        return Results.Ok(Array.Empty<object>());
+    }
+    else if (role == UserRole.Officer)
+    {
+        var districts = await db.OfficerAssignments
+            .AsNoTracking()
+            .Where(assignment => assignment.UserId == userId && assignment.IsActive)
+            .Select(assignment => assignment.District)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        query = query.Where(f => f.District != null && districts.Contains(f.District));
+    }
+    else if (role is not (UserRole.Government or UserRole.SuperAdmin or UserRole.Developer))
+    {
+        return Results.Forbid();
+    }
+
+    var farms = await query
+        .OrderBy(f => f.Name)
         .Select(f => new
         {
             f.Id,
@@ -330,7 +372,10 @@ api.MapGet("/farms", async (SWARNABHOOMIContext db) =>
             farmOwner = f.User.FirstName + " " + f.User.LastName,
             f.CreatedAt
         })
-        .ToListAsync()));
+        .ToListAsync(cancellationToken);
+
+    return Results.Ok(farms);
+});
 
 api.MapPost("/farms", async (CreateFarmRequest request, SWARNABHOOMIContext db) =>
 {

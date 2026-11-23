@@ -8,17 +8,27 @@ import FieldMapPage from './FieldMapPage'
 import MarketPricesPage from './MarketPricesPage'
 import MemberDetailsPage from './MemberDetailsPage'
 import WeatherPage from './WeatherPage'
+import {
+  SRI_LANKA_PROVINCES,
+  getDistrictsForProvince,
+  getProvinceForDistrict,
+} from './sriLankaLocations'
 
 type Section = 'overview' | 'farms' | 'demands' | 'prices' | 'weather' | 'varieties' | 'users' | 'field-map' | 'assistant' | 'assistant-settings' | 'member-details'
 type DataSectionId = 'farms' | 'demands' | 'varieties' | 'users'
 
 type DashboardSummary = {
-  users: number
-  farms: number
-  demandEntries: number
-  varieties: number
-  marketPrices: number
-  weatherRecords: number
+  users: number | null
+  farms: number | null
+  demandEntries: number | null
+  varieties: number | null
+  marketPrices: number | null
+  weatherRecords: number | null
+  myFarms?: number | null
+  myFields?: number | null
+  myTotalAreaHectares?: number | null
+  visibleCards?: string[]
+  districtSupplies?: { district: string; verifiedFields: number; verifiedAreaHectares: number }[] | null
 }
 
 type User = {
@@ -263,7 +273,16 @@ function App() {
   }
 
   const register = async (
-    details: { email: string; password: string; firstName: string; lastName: string; phoneNumber: string; role: number },
+    details: {
+      email: string
+      password: string
+      firstName: string
+      lastName: string
+      phoneNumber: string
+      role: number
+      district?: string
+      province?: string
+    },
   ) => {
     const response = await fetch('/api/auth/register', {
       method: 'POST',
@@ -444,8 +463,26 @@ function App() {
           <div className="page-heading">
             <div>
               <div className="eyebrow"><span className="eyebrow-line" /> SWARNABHOOMI NETWORK</div>
-              <h1>{section === 'overview' ? <>{greeting}, <em>Admin</em></> : currentTitle.title}</h1>
-              <p>{section === 'overview' ? 'Here’s what’s happening across your rice ecosystem today.' : currentTitle.subtitle}</p>
+              <h1>
+                {section === 'overview' ? (
+                  canManageUsers ? (
+                    <>{greeting}, <em>Admin</em></>
+                  ) : (
+                    <>{greeting}, <em>{authUser.name ? authUser.name.trim().split(' ')[0] : authUser.role}</em></>
+                  )
+                ) : (
+                  currentTitle.title
+                )}
+              </h1>
+              <p>
+                {section === 'overview'
+                  ? authUser.role === 'Farmer'
+                    ? 'Here’s what’s happening on your farms and fields today.'
+                    : authUser.role === 'Buyer'
+                    ? 'Monitor buyer demands, verified supply summaries, and official market prices.'
+                    : 'Here’s what’s happening across your rice ecosystem today.'
+                  : currentTitle.subtitle}
+              </p>
             </div>
             {!isExtensionSection && <div className="heading-actions">
               <span className="live-status"><i /> {loading ? 'Updating' : 'Live data'}</span>
@@ -459,6 +496,7 @@ function App() {
             <Overview
               data={filtered}
               loading={loading}
+              authUser={authUser}
               canManageUsers={canManageUsers}
               onNavigate={setActiveSection}
             />
@@ -525,7 +563,16 @@ function LoginPage({
   serviceError,
 }: {
   onLogin: (email: string, password: string, rememberMe: boolean) => Promise<void>
-  onRegister: (details: { email: string; password: string; firstName: string; lastName: string; phoneNumber: string; role: number }) => Promise<void>
+  onRegister: (details: {
+    email: string
+    password: string
+    firstName: string
+    lastName: string
+    phoneNumber: string
+    role: number
+    district?: string
+    province?: string
+  }) => Promise<void>
   serviceError: string
 }) {
   const formRef = useRef<HTMLElement | null>(null)
@@ -535,6 +582,8 @@ function LoginPage({
   const [password, setPassword] = useState('')
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
+  const [province, setProvince] = useState('')
+  const [district, setDistrict] = useState('')
   const [role, setRole] = useState(0)
   const [rememberMe, setRememberMe] = useState(true)
   const [showPassword, setShowPassword] = useState(false)
@@ -556,7 +605,16 @@ function LoginPage({
       if (mode === 'login') {
         await onLogin(email.trim(), password, rememberMe)
       } else {
-        await onRegister({ email: email.trim(), password, firstName: firstName.trim(), lastName: lastName.trim(), phoneNumber: '', role })
+        await onRegister({
+          email: email.trim(),
+          password,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          phoneNumber: '',
+          role,
+          district: district.trim(),
+          province: province.trim(),
+        })
         setMode('login')
         setPassword('')
         setRegistrationNotice('Your request was sent. You can sign in after an administrator approves your account.')
@@ -615,20 +673,72 @@ function LoginPage({
             )}
             <form onSubmit={submit}>
               {mode === 'register' && (
-                <div className="registration-name-fields">
-                  <label className="login-field">
-                    <span>First name</span>
-                    <span className="login-input-wrap">
-                      <input value={firstName} onChange={(event) => setFirstName(event.target.value)} maxLength={100} autoComplete="given-name" required />
-                    </span>
-                  </label>
-                  <label className="login-field">
-                    <span>Last name</span>
-                    <span className="login-input-wrap">
-                      <input value={lastName} onChange={(event) => setLastName(event.target.value)} maxLength={100} autoComplete="family-name" required />
-                    </span>
-                  </label>
-                </div>
+                <>
+                  <div className="registration-name-fields">
+                    <label className="login-field">
+                      <span>First name</span>
+                      <span className="login-input-wrap">
+                        <input value={firstName} onChange={(event) => setFirstName(event.target.value)} maxLength={100} autoComplete="given-name" required />
+                      </span>
+                    </label>
+                    <label className="login-field">
+                      <span>Last name</span>
+                      <span className="login-input-wrap">
+                        <input value={lastName} onChange={(event) => setLastName(event.target.value)} maxLength={100} autoComplete="family-name" required />
+                      </span>
+                    </label>
+                  </div>
+                  <div className="registration-name-fields">
+                    <label className="login-field">
+                      <span>Province</span>
+                      <span className="login-input-wrap">
+                        <input
+                          list="registration-provinces"
+                          value={province}
+                          onChange={(event) => {
+                            const val = event.target.value
+                            setProvince(val)
+                            const valid = getDistrictsForProvince(val)
+                            if (district && !valid.includes(district)) {
+                              setDistrict('')
+                            }
+                          }}
+                          placeholder="Select or enter province"
+                          maxLength={100}
+                        />
+                        <datalist id="registration-provinces">
+                          {SRI_LANKA_PROVINCES.map((p) => (
+                            <option key={p} value={p} />
+                          ))}
+                        </datalist>
+                      </span>
+                    </label>
+                    <label className="login-field">
+                      <span>District</span>
+                      <span className="login-input-wrap">
+                        <input
+                          list="registration-districts"
+                          value={district}
+                          onChange={(event) => {
+                            const val = event.target.value
+                            setDistrict(val)
+                            if (!province) {
+                              const matched = getProvinceForDistrict(val)
+                              if (matched) setProvince(matched)
+                            }
+                          }}
+                          placeholder="Select or enter district"
+                          maxLength={100}
+                        />
+                        <datalist id="registration-districts">
+                          {getDistrictsForProvince(province).map((d) => (
+                            <option key={d} value={d} />
+                          ))}
+                        </datalist>
+                      </span>
+                    </label>
+                  </div>
+                </>
               )}
               <label className="login-field">
                 <span>Email address</span>
@@ -743,7 +853,279 @@ function LoginPage({
   )
 }
 
-function Overview({
+function FarmerOverview({
+  data,
+  loading,
+  onNavigate,
+}: {
+  data: AppData | null
+  loading: boolean
+  onNavigate: (section: Section) => void
+}) {
+  const myFarmsCount = data?.summary.myFarms ?? data?.farms.length ?? 0
+  const myFieldsCount = data?.summary.myFields ?? 0
+  const myTotalArea = (
+    data?.summary.myTotalAreaHectares ??
+    data?.farms.reduce((area, farm) => area + farm.areaHectares, 0) ??
+    0
+  ).toFixed(1)
+
+  const farmerMetrics = [
+    {
+      title: 'My Farms',
+      value: myFarmsCount,
+      foot: 'Registered to your account',
+      icon: 'farm',
+      color: 'blue',
+      section: 'farms' as Section,
+    },
+    {
+      title: 'My Mapped Fields',
+      value: myFieldsCount,
+      foot: 'GPS mapped field plots',
+      icon: 'map',
+      color: 'green',
+      section: 'field-map' as Section,
+    },
+    {
+      title: 'Total Mapped Area',
+      value: `${myTotalArea} ha`,
+      foot: 'Active cultivation footprint',
+      icon: 'leaf',
+      color: 'purple',
+      section: 'field-map' as Section,
+    },
+    {
+      title: 'Latest Paddy Prices',
+      value: 'CBSL',
+      foot: 'Official market watch',
+      icon: 'chart',
+      color: 'orange',
+      section: 'prices' as Section,
+    },
+  ]
+
+  return (
+    <>
+      <section className="welcome-banner">
+        <div className="welcome-copy">
+          <span className="banner-kicker"><span /> FARMER WORKSPACE</span>
+          <h2>Field insight.<br /><em>Stronger harvests.</em></h2>
+          <p>One connected view for your registered farms, GPS field boundaries, and regional rice prices.</p>
+          <button className="banner-link" onClick={() => onNavigate('field-map')}>
+            Open Satellite Map <Icon name="arrow" size={16} />
+          </button>
+        </div>
+        <div className="banner-art" aria-hidden="true">
+          <div className="sun-disc" />
+          <div className="field field-back" />
+          <div className="field field-middle" />
+          <div className="field field-front" />
+          <div className="plant plant-one"><i /><i /><i /><b /></div>
+          <div className="plant plant-two"><i /><i /><i /><b /></div>
+          <span className="art-label art-label-top">YALA SEASON <b>’27</b></span>
+          <span className="art-label art-label-bottom">ROOTED IN PROGRESS</span>
+        </div>
+      </section>
+
+      <section className="metric-grid" aria-label="Farmer summary">
+        {farmerMetrics.map((metric, index) => (
+          <button
+            className="metric-card"
+            key={metric.title}
+            onClick={() => onNavigate(metric.section)}
+          >
+            <div className="metric-top">
+              <span className={`metric-icon ${metric.color}`}>
+                <Icon name={metric.icon} size={18} />
+              </span>
+              <span className="metric-index">0{index + 1}</span>
+            </div>
+            <div className="metric-value">
+              {loading ? <span className="skeleton skeleton-number" /> : metric.value}
+            </div>
+            <div className="metric-title">{metric.title}</div>
+            <div className="metric-foot">
+              {metric.foot}
+              <span className="metric-arrow"><Icon name="arrow" size={15} /></span>
+            </div>
+          </button>
+        ))}
+      </section>
+
+      <div className="dashboard-grid">
+        <section className="panel recent-panel">
+          <div className="panel-header">
+            <div>
+              <span className="panel-eyebrow">YOUR HOLDINGS</span>
+              <h3>My registered farms</h3>
+            </div>
+            <button className="text-link" onClick={() => onNavigate('field-map')}>
+              Open map <Icon name="arrow" size={15} />
+            </button>
+          </div>
+          {data?.farms.length ? (
+            <div className="farm-list">
+              {data.farms.map((farm) => (
+                <div className="farm-row" key={farm.id}>
+                  <div className="farm-avatar"><Icon name="leaf" size={19} /></div>
+                  <div className="farm-info">
+                    <strong>{farm.name}</strong>
+                    <span><Icon name="pin" size={13} /> {farm.district || 'Location not set'}, {farm.province || 'Sri Lanka'}</span>
+                  </div>
+                  <div className="farm-area">
+                    <strong>{farm.areaHectares.toLocaleString()} ha</strong>
+                    <span>Your farm</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState loading={loading} label="No farms registered yet. Open the satellite map to register your first farm." />
+          )}
+          <div className="panel-note"><span className="note-dot" /> Farm plots and boundaries are strictly private to you</div>
+        </section>
+
+        <section className="panel market-panel">
+          <div className="panel-header">
+            <div><span className="panel-eyebrow">MARKET PULSE</span><h3>Latest price watch</h3></div>
+            <button className="round-link" aria-label="View all market prices" onClick={() => onNavigate('prices')}><Icon name="arrow" size={17} /></button>
+          </div>
+          <div className="overview-live-card">
+            <span className="rice-stamp"><Icon name="chart" size={18} /></span>
+            <div><strong>Official daily rice prices</strong><small>Latest report from the Central Bank of Sri Lanka</small></div>
+            <button type="button" className="text-link" onClick={() => onNavigate('prices')}>View report <Icon name="arrow" size={14} /></button>
+          </div>
+        </section>
+      </div>
+
+      <div className="bottom-grid">
+        <section className="season-strip">
+          <div className="season-icon-large"><Icon name="calendar" size={21} /></div>
+          <div><span className="panel-eyebrow">SEASON AT A GLANCE</span><h3>Yala 2027 planning is underway</h3><p>Review buyer demands and optimize your seasonal planting schedule.</p></div>
+          <button className="text-link" onClick={() => onNavigate('demands')}>View demand <Icon name="arrow" size={15} /></button>
+        </section>
+        <section className="weather-card">
+          <div className="weather-heading"><span className="panel-eyebrow">LOCAL WEATHER</span><Icon name="sun" size={19} /></div>
+          <div className="weather-main"><strong>25</strong><span>districts</span></div>
+          <div className="weather-facts"><span><Icon name="cloud" size={15} /> Real-time forecast model</span></div>
+          <button type="button" className="text-link" onClick={() => onNavigate('weather')}>View district weather <Icon name="arrow" size={14} /></button>
+        </section>
+      </div>
+    </>
+  )
+}
+
+function BuyerOverview({
+  data,
+  loading,
+  onNavigate,
+}: {
+  data: AppData | null
+  loading: boolean
+  onNavigate: (section: Section) => void
+}) {
+  const buyerMetrics = [
+    { title: 'Demand entries', value: data?.summary.demandEntries ?? '—', foot: 'Procurement demand', icon: 'layers', color: 'orange', section: 'demands' as Section },
+    { title: 'Rice varieties', value: data?.summary.varieties ?? '—', foot: 'Procurement profiles', icon: 'leaf', color: 'purple', section: 'varieties' as Section },
+    { title: 'Official Price Watch', value: 'CBSL', foot: 'Daily market report', icon: 'chart', color: 'green', section: 'prices' as Section },
+    { title: 'Weather Stations', value: 25, foot: 'District centers', icon: 'sun', color: 'blue', section: 'weather' as Section },
+  ]
+
+  const supplies = data?.summary.districtSupplies || []
+
+  return (
+    <>
+      <section className="welcome-banner">
+        <div className="welcome-copy">
+          <span className="banner-kicker"><span /> BUYER WORKSPACE</span>
+          <h2>Market demand.<br /><em>Verified harvests.</em></h2>
+          <p>Monitor procurement demands, check CBSL daily rates, and review verified regional supply.</p>
+          <button className="banner-link" onClick={() => onNavigate('demands')}>Explore Demands <Icon name="arrow" size={16} /></button>
+        </div>
+        <div className="banner-art" aria-hidden="true">
+          <div className="sun-disc" />
+          <div className="field field-back" />
+          <div className="field field-middle" />
+          <div className="field field-front" />
+          <div className="plant plant-one"><i /><i /><i /><b /></div>
+          <div className="plant plant-two"><i /><i /><i /><b /></div>
+          <span className="art-label art-label-top">YALA SEASON <b>’27</b></span>
+          <span className="art-label art-label-bottom">ROOTED IN PROGRESS</span>
+        </div>
+      </section>
+
+      <section className="metric-grid" aria-label="Buyer summary">
+        {buyerMetrics.map((metric, index) => (
+          <button
+            className="metric-card"
+            key={metric.title}
+            onClick={() => onNavigate(metric.section)}
+          >
+            <div className="metric-top">
+              <span className={`metric-icon ${metric.color}`}><Icon name={metric.icon} size={18} /></span>
+              <span className="metric-index">0{index + 1}</span>
+            </div>
+            <div className="metric-value">{loading ? <span className="skeleton skeleton-number" /> : metric.value}</div>
+            <div className="metric-title">{metric.title}</div>
+            <div className="metric-foot">{metric.foot}<span className="metric-arrow"><Icon name="arrow" size={15} /></span></div>
+          </button>
+        ))}
+      </section>
+
+      <div className="dashboard-grid">
+        <section className="panel recent-panel">
+          <div className="panel-header">
+            <div><span className="panel-eyebrow">SUPPLY INTELLIGENCE</span><h3>Verified supply by district</h3></div>
+            <button className="text-link" onClick={() => onNavigate('field-map')}>View on map <Icon name="arrow" size={15} /></button>
+          </div>
+          {supplies.length ? (
+            <div className="farm-list">
+              {supplies.slice(0, 4).map((supply) => (
+                <div className="farm-row" key={supply.district}>
+                  <div className="farm-avatar"><Icon name="map" size={19} /></div>
+                  <div className="farm-info"><strong>{supply.district}</strong><span><Icon name="pin" size={13} /> {supply.verifiedFields} verified fields</span></div>
+                  <div className="farm-area"><strong>{supply.verifiedAreaHectares.toFixed(1)} ha</strong><span>Verified supply</span></div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState loading={loading} label="District supply data is updating." />
+          )}
+          <div className="panel-note"><span className="note-dot" /> Aggregated district metrics protect individual farmer privacy</div>
+        </section>
+
+        <section className="panel market-panel">
+          <div className="panel-header">
+            <div><span className="panel-eyebrow">MARKET PULSE</span><h3>Latest price watch</h3></div>
+            <button className="round-link" aria-label="View all market prices" onClick={() => onNavigate('prices')}><Icon name="arrow" size={17} /></button>
+          </div>
+          <div className="overview-live-card">
+            <span className="rice-stamp"><Icon name="chart" size={18} /></span>
+            <div><strong>Official daily rice prices</strong><small>Latest report from the Central Bank of Sri Lanka</small></div>
+            <button type="button" className="text-link" onClick={() => onNavigate('prices')}>View report <Icon name="arrow" size={14} /></button>
+          </div>
+        </section>
+      </div>
+
+      <div className="bottom-grid">
+        <section className="season-strip">
+          <div className="season-icon-large"><Icon name="calendar" size={21} /></div>
+          <div><span className="panel-eyebrow">SEASON AT A GLANCE</span><h3>Yala 2027 procurement window</h3><p>Manage requirements and connect with verified regional supplies.</p></div>
+          <button className="text-link" onClick={() => onNavigate('demands')}>View demand <Icon name="arrow" size={15} /></button>
+        </section>
+        <section className="weather-card">
+          <div className="weather-heading"><span className="panel-eyebrow">FIELD CONDITIONS</span><Icon name="sun" size={19} /></div>
+          <div className="weather-main"><strong>25</strong><span>district centers</span></div>
+          <div className="weather-facts"><span><Icon name="cloud" size={15} /> Current model conditions</span></div>
+          <button type="button" className="text-link" onClick={() => onNavigate('weather')}>View district weather <Icon name="arrow" size={14} /></button>
+        </section>
+      </div>
+    </>
+  )
+}
+
+function AdminOverview({
   data,
   loading,
   canManageUsers,
@@ -851,6 +1233,35 @@ function Overview({
         </section>
       </div>
     </>
+  )
+}
+
+function Overview({
+  data,
+  loading,
+  authUser,
+  canManageUsers,
+  onNavigate,
+}: {
+  data: AppData | null
+  loading: boolean
+  authUser: AuthUser
+  canManageUsers: boolean
+  onNavigate: (section: Section) => void
+}) {
+  if (authUser.role === 'Farmer') {
+    return <FarmerOverview data={data} loading={loading} onNavigate={onNavigate} />
+  }
+  if (authUser.role === 'Buyer') {
+    return <BuyerOverview data={data} loading={loading} onNavigate={onNavigate} />
+  }
+  return (
+    <AdminOverview
+      data={data}
+      loading={loading}
+      canManageUsers={canManageUsers}
+      onNavigate={onNavigate}
+    />
   )
 }
 

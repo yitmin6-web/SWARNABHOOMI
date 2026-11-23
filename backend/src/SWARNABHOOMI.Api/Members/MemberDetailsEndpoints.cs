@@ -9,7 +9,7 @@ public static class MemberDetailsEndpoints
     public static IEndpointRouteBuilder MapMemberDetailsEndpoints(this IEndpointRouteBuilder endpoints)
     {
         var members = endpoints.MapGroup("/api/admin/members")
-            .RequireAuthorization("SuperAdminOnly");
+            .RequireAuthorization("AdminOnly");
 
         members.MapGet("/{memberId:guid}", GetMemberDetails);
         return endpoints;

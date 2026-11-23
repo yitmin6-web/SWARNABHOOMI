@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
+import {
+  SRI_LANKA_PROVINCES,
+  getDistrictsForProvince,
+  getProvinceForDistrict,
+} from './sriLankaLocations'
 
 type MemberAccount = {
   id: string
@@ -165,6 +170,26 @@ export default function MemberDetailsPage({
   const [details, setDetails] = useState<MemberDetails | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [filterProvince, setFilterProvince] = useState('')
+  const [filterDistrict, setFilterDistrict] = useState('')
+
+  const handleProvinceChange = (newProvince: string) => {
+    setFilterProvince(newProvince)
+    const valid = getDistrictsForProvince(newProvince)
+    if (filterDistrict && !valid.includes(filterDistrict)) {
+      setFilterDistrict('')
+    }
+  }
+
+  const handleDistrictChange = (newDistrict: string) => {
+    setFilterDistrict(newDistrict)
+    if (!filterProvince) {
+      const matched = getProvinceForDistrict(newDistrict)
+      if (matched) {
+        setFilterProvince(matched)
+      }
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -208,6 +233,39 @@ export default function MemberDetailsPage({
             <p>Profile and related records across the Swarnabhoomi network.</p>
           </div>
           <button type="button" className="extension-secondary-button" onClick={onBack}>Back to People</button>
+        </div>
+
+        <div className="member-location-filter" style={{ display: 'flex', gap: '12px', padding: '10px 14px', background: '#f5f8f3', borderRadius: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', color: '#496350', fontWeight: 600 }}>
+            <span>Filter by province</span>
+            <input
+              list="member-filter-provinces"
+              value={filterProvince}
+              onChange={(e) => handleProvinceChange(e.target.value)}
+              placeholder="All provinces"
+              style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #d4ded0', fontSize: '12px' }}
+            />
+            <datalist id="member-filter-provinces">
+              {SRI_LANKA_PROVINCES.map((p) => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '11px', color: '#496350', fontWeight: 600 }}>
+            <span>Filter by district</span>
+            <input
+              list="member-filter-districts"
+              value={filterDistrict}
+              onChange={(e) => handleDistrictChange(e.target.value)}
+              placeholder="All districts"
+              style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #d4ded0', fontSize: '12px' }}
+            />
+            <datalist id="member-filter-districts">
+              {getDistrictsForProvince(filterProvince).map((d) => (
+                <option key={d} value={d} />
+              ))}
+            </datalist>
+          </label>
         </div>
 
         {loading && <div className="member-details-message" role="status">Loading member details…</div>}
