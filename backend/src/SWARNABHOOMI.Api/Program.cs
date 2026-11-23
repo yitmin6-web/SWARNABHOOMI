@@ -10,6 +10,7 @@ using SWARNABHOOMI.Core.Enums;
 using SWARNABHOOMI.Api.Authentication;
 using SWARNABHOOMI.Api.Cultivation;
 using SWARNABHOOMI.Api.FieldMap;
+using SWARNABHOOMI.Api.Intelligence;
 using SWARNABHOOMI.Api.LiveData;
 using SWARNABHOOMI.Api.Members;
 using SWARNABHOOMI.Infrastructure.Data;
@@ -41,6 +42,7 @@ builder.Services.AddHttpClient("cbsl-prices", client =>
 });
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IDashboardOverviewService, DashboardOverviewService>();
+builder.Services.AddScoped<IRiceIntelligenceService, RiceIntelligenceService>();
 builder.Services.AddScoped<ICultivationService, CultivationService>();
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
@@ -151,6 +153,7 @@ app.MapGet("/api/health", () => Results.Ok(new
 app.MapAuthEndpoints();
 app.MapFieldMapEndpoints();
 app.MapCultivationEndpoints();
+app.MapRiceIntelligenceEndpoints();
 app.MapAssistantEndpoints();
 app.MapMemberDetailsEndpoints();
 

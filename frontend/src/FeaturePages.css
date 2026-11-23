@@ -1486,3 +1486,423 @@
     align-items: stretch;
   }
 }
+
+/* Rice Intelligence Engine */
+.intelligence-page {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.intelligence-hero-card {
+  margin-bottom: 2px;
+}
+
+.toolbar-button-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Rule Banner Card */
+.rule-banner-card {
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+  border: 1px solid #bbf7d0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rule-banner-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.rule-banner-header h3 {
+  margin: 4px 0;
+  font-size: 1.2rem;
+  color: #166534;
+  font-weight: 600;
+}
+
+.rule-rates-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.rule-rate-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #ffffff;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #dcfce7;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.rule-rate-chip .rate-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.rule-rate-chip .rate-value {
+  font-size: 1.35rem;
+  color: #15803d;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.rule-rate-chip .rate-value small {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.rule-rate-chip .rate-subtext {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.rule-rate-chip.chip-urea .rate-value {
+  color: #0369a1;
+}
+
+.rule-rate-chip.chip-tsp .rate-value {
+  color: #b45309;
+}
+
+.rule-rate-chip.chip-mop .rate-value {
+  color: #6b21a8;
+}
+
+/* Rule Management / Publishing Form */
+.rule-mgmt-panel {
+  border-left: 4px solid #16a34a;
+}
+
+.rule-form-rates-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.rule-publish-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+/* KPI Grid */
+.intelligence-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.intelligence-kpi-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.intelligence-kpi-card .kpi-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.intelligence-kpi-card .kpi-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.1;
+}
+
+.intelligence-kpi-card .kpi-value small {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #64748b;
+}
+
+.intelligence-kpi-card .kpi-foot {
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.intelligence-kpi-card.kpi-surplus {
+  border-left: 4px solid #22c55e;
+}
+
+.intelligence-kpi-card.kpi-surplus .kpi-value {
+  color: #15803d;
+}
+
+.intelligence-kpi-card.kpi-deficit {
+  border-left: 4px solid #ef4444;
+}
+
+.intelligence-kpi-card.kpi-deficit .kpi-value {
+  color: #b91c1c;
+}
+
+/* Fertilizer Bags Badges */
+.badge-bags {
+  display: inline-block;
+  padding: 3px 8px;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.badge-bags.highlight-bags {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #065f46;
+  font-size: 0.95rem;
+}
+
+.yield-highlight {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #15803d;
+}
+
+.table-totals-row {
+  background: #f8fafc;
+  font-weight: 600;
+  border-top: 2px solid #cbd5e1;
+}
+
+/* CSS Surplus / Deficit Horizontal Bar Chart */
+.chart-legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 0.82rem;
+  color: #475569;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.supply-swatch {
+  background: #22c55e;
+}
+
+.demand-swatch {
+  background: #3b82f6;
+}
+
+.surplus-deficit-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.chart-row {
+  display: grid;
+  grid-template-columns: 180px 1fr 160px;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.chart-district-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chart-district-label strong {
+  font-size: 0.95rem;
+  color: #0f172a;
+}
+
+.chart-district-label span {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.chart-bars-track {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bar-wrapper {
+  background: #e2e8f0;
+  height: 18px;
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.chart-bar {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #ffffff;
+  border-radius: 4px;
+  transition: width 0.3s ease-in-out;
+  white-space: nowrap;
+}
+
+.chart-bar-supply {
+  background: linear-gradient(90deg, #16a34a, #22c55e);
+}
+
+.chart-bar-demand {
+  background: linear-gradient(90deg, #2563eb, #3b82f6);
+}
+
+.chart-status-col {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.balance-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.balance-surplus {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+.balance-deficit {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+
+.balance-balanced {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+}
+
+/* Monthly Harvest Schedule Timeline */
+.monthly-timeline-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.monthly-timeline-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.monthly-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.monthly-card-tonnage {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.monthly-card-tonnage strong {
+  font-size: 1.45rem;
+  color: #15803d;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.monthly-card-tonnage small {
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.monthly-varieties-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.variety-chip-small {
+  display: inline-block;
+  padding: 2px 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  color: #475569;
+}
+
+@media (max-width: 1024px) {
+  .rule-rates-strip,
+  .rule-form-rates-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chart-row {
+    grid-template-columns: 140px 1fr 130px;
+  }
+}
+
+@media (max-width: 768px) {
+  .chart-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .chart-status-col {
+    justify-content: flex-start;
+  }
+
+  .rule-rates-strip,
+  .rule-form-rates-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

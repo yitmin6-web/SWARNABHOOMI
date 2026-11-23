@@ -5,6 +5,7 @@ import './FeaturePages.css'
 import AssistantConfigPage from './AssistantConfigPage'
 import AssistantPage from './AssistantPage'
 import CultivationPage from './CultivationPage'
+import RiceIntelligencePage from './RiceIntelligencePage'
 import FieldMapPage from './FieldMapPage'
 import MarketPricesPage from './MarketPricesPage'
 import MemberDetailsPage from './MemberDetailsPage'
@@ -15,7 +16,7 @@ import {
   getProvinceForDistrict,
 } from './sriLankaLocations'
 
-type Section = 'overview' | 'farms' | 'cultivation' | 'demands' | 'prices' | 'weather' | 'varieties' | 'users' | 'field-map' | 'assistant' | 'assistant-settings' | 'member-details'
+type Section = 'overview' | 'farms' | 'cultivation' | 'intelligence' | 'demands' | 'prices' | 'weather' | 'varieties' | 'users' | 'field-map' | 'assistant' | 'assistant-settings' | 'member-details'
 type DataSectionId = 'farms' | 'demands' | 'varieties' | 'users'
 
 type DashboardSummary = {
@@ -118,6 +119,7 @@ const navigation: { id: Section; label: string; icon: string }[] = [
   { id: 'overview', label: 'Overview', icon: 'grid' },
   { id: 'farms', label: 'Farms & fields', icon: 'farm' },
   { id: 'cultivation', label: 'Cultivation', icon: 'calendar' },
+  { id: 'intelligence', label: 'Rice intelligence', icon: 'chart' },
   { id: 'demands', label: 'Demand board', icon: 'layers' },
   { id: 'prices', label: 'Market prices', icon: 'chart' },
   { id: 'weather', label: 'Weather', icon: 'sun' },
@@ -130,6 +132,7 @@ const sectionTitles: Record<Section, { title: string; subtitle: string }> = {
   overview: { title: 'Overview', subtitle: 'A clear view of your rice ecosystem.' },
   farms: { title: 'Farms & fields', subtitle: 'Explore registered farms across Sri Lanka.' },
   cultivation: { title: 'Cultivation cycles', subtitle: 'Seasonal crop planning, sowing dates, and growth stages.' },
+  intelligence: { title: 'Rice intelligence', subtitle: 'Automated agronomic inputs, harvest yield forecasts, and supply balance.' },
   demands: { title: 'Demand board', subtitle: 'Keep track of buyer demand and upcoming seasons.' },
   prices: { title: 'Market prices', subtitle: 'The latest official daily rice prices for selected markets.' },
   weather: { title: 'Weather', subtitle: 'Current model conditions across all 25 Sri Lankan districts.' },
@@ -381,7 +384,7 @@ function App() {
   }
 
   const currentTitle = sectionTitles[section]
-  const isExtensionSection = ['field-map', 'cultivation', 'assistant', 'assistant-settings', 'member-details', 'prices', 'weather'].includes(section)
+  const isExtensionSection = ['field-map', 'cultivation', 'intelligence', 'assistant', 'assistant-settings', 'member-details', 'prices', 'weather'].includes(section)
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query || !data) return data
@@ -554,6 +557,8 @@ function App() {
             <WeatherPage />
           ) : section === 'cultivation' ? (
             canViewCultivation ? <CultivationPage role={authUser.role} /> : <AccessDenied />
+          ) : section === 'intelligence' ? (
+            <RiceIntelligencePage role={authUser.role} />
           ) : section === 'field-map' ? (
             canViewFieldMap ? <FieldMapPage role={authUser.role} /> : <AccessDenied />
           ) : section === 'assistant' ? (

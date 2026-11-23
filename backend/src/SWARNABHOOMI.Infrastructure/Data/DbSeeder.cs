@@ -50,6 +50,37 @@ public static class DbSeeder
             context.SaveChanges();
         }
 
+        if (!context.ResourceRuleVersions.Any())
+        {
+            var defaultPayload = new
+            {
+                versionName = "DOA Irrigated Paddy Standard (2026/2027)",
+                seedPaddyKgPerHectare = 100m,
+                ureaKgPerHectare = 225m,
+                tspKgPerHectare = 55m,
+                mopKgPerHectare = 60m,
+                notes = "Standard national fertilizer and seed recommendation by Department of Agriculture Sri Lanka for irrigated lowlands."
+            };
+
+            context.ResourceRuleVersions.Add(new ResourceRuleVersion
+            {
+                Category = "PaddyInputStandard",
+                ApplicabilityJson = System.Text.Json.JsonSerializer.Serialize(defaultPayload),
+                MinimumValue = 50m,
+                MaximumValue = 300m,
+                Unit = "kg/ha",
+                SourceReference = "Department of Agriculture Sri Lanka (DOA)",
+                EffectiveFrom = new DateOnly(2026, 1, 1),
+                EffectiveTo = null,
+                Status = "Active",
+                Version = 1,
+                ReviewedBy = "DOA Technical Division",
+                ReviewedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                ChangeReason = "Initial baseline standard"
+            });
+            context.SaveChanges();
+        }
+
         if (context.Users.Any())
         {
             return;

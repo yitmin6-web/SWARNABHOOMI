@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using SWARNABHOOMI.Core.Entities;
 using SWARNABHOOMI.Infrastructure.Data;
+using SWARNABHOOMI.Services;
 
 namespace SWARNABHOOMI.Api.FieldMap;
 
@@ -336,6 +337,7 @@ public static class FieldMapEndpoints
         ReviewFieldRequest request,
         ClaimsPrincipal principal,
         SWARNABHOOMIContext db,
+        IRiceIntelligenceService intelligenceService,
         CancellationToken cancellationToken)
     {
         var role = principal.FindFirstValue(ClaimTypes.Role);
@@ -410,6 +412,8 @@ public static class FieldMapEndpoints
             request.Notes?.Trim()));
         await db.SaveChangesAsync(cancellationToken);
 
+        await intelligenceService.RecalculateForecastsForFieldAsync(fieldId, cancellationToken);
+
         return Results.Ok(new { fieldId, verification.Status, verification.ReviewedAt, verification.ReviewNotes });
     }
 
@@ -418,6 +422,7 @@ public static class FieldMapEndpoints
         VerifyFieldRequest request,
         ClaimsPrincipal principal,
         SWARNABHOOMIContext db,
+        IRiceIntelligenceService intelligenceService,
         CancellationToken cancellationToken)
     {
         var role = principal.FindFirstValue(ClaimTypes.Role);
@@ -489,6 +494,8 @@ public static class FieldMapEndpoints
             notes));
 
         await db.SaveChangesAsync(cancellationToken);
+
+        await intelligenceService.RecalculateForecastsForFieldAsync(id, cancellationToken);
 
         return Results.Ok(new
         {

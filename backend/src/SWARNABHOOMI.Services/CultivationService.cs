@@ -123,7 +123,9 @@ public interface ICultivationService
         CancellationToken cancellationToken = default);
 }
 
-public sealed class CultivationService(SWARNABHOOMIContext db) : ICultivationService
+public sealed class CultivationService(
+    SWARNABHOOMIContext db,
+    IRiceIntelligenceService intelligenceService) : ICultivationService
 {
     public async Task<IReadOnlyList<SeasonDto>> GetSeasonsAsync(CancellationToken cancellationToken = default)
     {
@@ -527,6 +529,9 @@ public sealed class CultivationService(SWARNABHOOMIContext db) : ICultivationSer
 
         await db.SaveChangesAsync(cancellationToken);
 
+        // Automatically produce initial HarvestForecast and input requirements
+        await intelligenceService.UpsertForecastForCultivationAsync(record.Id, cancellationToken);
+
         var verificationStatus = field.Verifications
             .OrderByDescending(v => v.CreatedAt)
             .Select(v => v.Status)
@@ -636,6 +641,9 @@ public sealed class CultivationService(SWARNABHOOMIContext db) : ICultivationSer
         });
 
         await db.SaveChangesAsync(cancellationToken);
+
+        // Automatically update HarvestForecast on stage transition
+        await intelligenceService.UpsertForecastForCultivationAsync(record.Id, cancellationToken);
 
         var verificationStatus = record.Field.Verifications
             .OrderByDescending(v => v.CreatedAt)
