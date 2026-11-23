@@ -181,7 +181,9 @@ public interface IRiceIntelligenceService
         CancellationToken cancellationToken = default);
 }
 
-public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntelligenceService
+public sealed class RiceIntelligenceService(
+    SWARNABHOOMIContext db,
+    IGovernanceNotificationService notificationService) : IRiceIntelligenceService
 {
     private sealed record RulePayload(
         string? versionName,
@@ -407,6 +409,21 @@ public sealed class RiceIntelligenceService(SWARNABHOOMIContext db) : IRiceIntel
         }
 
         await db.SaveChangesAsync(cancellationToken);
+
+        // Check if harvest window is approaching within 14 days and trigger idempotent notification
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var windowEnd = today.AddDays(14);
+        if (expectedHarvestDate >= today && expectedHarvestDate <= windowEnd)
+        {
+            var farmerUserId = record.FarmerId;
+            await notificationService.NotifyUpcomingHarvestWindowAsync(
+                farmerUserId,
+                record.Id,
+                record.Field.Name,
+                record.RiceVariety.Name,
+                expectedHarvestDate.ToDateTime(TimeOnly.MinValue),
+                cancellationToken);
+        }
 
         return new HarvestForecastDto(
             forecast.Id,

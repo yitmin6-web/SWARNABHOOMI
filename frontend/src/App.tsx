@@ -34,6 +34,44 @@ type DashboardSummary = {
   districtSupplies?: { district: string; verifiedFields: number; verifiedAreaHectares: number }[] | null
   pendingFieldVerifications?: number | null
   verifiedFields?: number | null
+  forecastedHarvestTonnes?: number | null
+  activeCultivations?: number | null
+  openPurchaseRequests?: number | null
+  unreadNotifications?: number | null
+}
+
+type NotificationItem = {
+  id: string
+  userId: string
+  type: string
+  title: string
+  message: string
+  category?: string | null
+  link?: string | null
+  isRead: boolean
+  readAt?: string | null
+  createdAt: string
+}
+
+type OfficerAssignmentItem = {
+  id: string
+  userId: string
+  officerName: string
+  officerEmail: string
+  district: string
+  province?: string | null
+  assignedBy?: string | null
+  assignedDate?: string | null
+  isActive: boolean
+  createdAt: string
+}
+
+type OfficerUserItem = {
+  id: string
+  name: string
+  email: string
+  district?: string | null
+  province?: string | null
 }
 
 type User = {
@@ -105,6 +143,7 @@ type FieldMapItem = {
   verificationStatus: string
   verifierNotes?: string | null
   verifiedAt?: string | null
+  isAssignedDistrict?: boolean
 }
 
 type AppData = {
@@ -206,9 +245,16 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
   )
 }
 
-function formatDate(value: string) {
+function formatDate(value?: string | null) {
   if (!value) return '—'
-  return new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(value))
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short', year: 'numeric' }).format(date)
+}
+
+function safeNum(val: unknown): number {
+  if (typeof val === 'number' && !Number.isNaN(val)) return val
+  const n = Number(val)
+  return Number.isNaN(n) ? 0 : n
 }
 
 function initials(name: string) {
@@ -290,6 +336,61 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [notifications, setNotifications] = useState<NotificationItem[]>([])
+  const [unreadCount, setUnreadCount] = useState<number>(0)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const notificationRef = useRef<HTMLDivElement | null>(null)
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await getJson<{ unreadCount: number; items?: NotificationItem[]; notifications?: NotificationItem[] }>('/api/notifications')
+      setNotifications(res.items ?? res.notifications ?? [])
+      setUnreadCount(safeNum(res.unreadCount))
+    } catch {
+      // Non-blocking notification fetch
+    }
+  }, [])
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        setNotificationsOpen(false)
+      }
+    }
+    if (notificationsOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [notificationsOpen])
+
+  const markNotificationRead = async (id: string, link?: string | null) => {
+    try {
+      await fetch(`/api/notifications/${id}/read`, { method: 'PUT', credentials: 'include' })
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)))
+      setUnreadCount((prev) => Math.max(0, prev - 1))
+    } catch {
+      // Non-blocking
+    }
+    if (link) {
+      const cleanLink = link.replace(/^\//, '').replace(/^api\//, '')
+      if (['field-map', 'cultivation', 'intelligence', 'demands', 'prices', 'weather', 'overview'].includes(cleanLink)) {
+        setActiveSection(cleanLink as Section)
+      }
+    }
+    setNotificationsOpen(false)
+  }
+
+  const markAllNotificationsRead = async () => {
+    try {
+      await fetch('/api/notifications/read-all', { method: 'PUT', credentials: 'include' })
+      setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
+      setUnreadCount(0)
+    } catch {
+      // Non-blocking
+    }
+  }
 
   const loadData = useCallback(async (includeUsers: boolean, canReviewFields: boolean) => {
     const [summary, users, farms, demands, varieties, mapData] = await Promise.all([
@@ -320,7 +421,10 @@ function App() {
           user.role === 'SuperAdmin' || user.role === 'Developer',
           isReviewer,
         )
-        if (active) setData(loadedData)
+        if (active) {
+          setData(loadedData)
+          void fetchNotifications()
+        }
       } catch (requestError) {
         if (active) setError(getErrorMessage(requestError))
       } finally {
@@ -358,6 +462,7 @@ function App() {
     try {
       const isReviewer = ['SuperAdmin', 'Developer', 'Officer', 'Government'].includes(user.role)
       setData(await loadData(user.role === 'SuperAdmin' || user.role === 'Developer', isReviewer))
+      void fetchNotifications()
     } catch (requestError) {
       setError(getErrorMessage(requestError))
     } finally {
@@ -437,6 +542,7 @@ function App() {
   const refreshData = () => {
     setLoading(true)
     setError('')
+    void fetchNotifications()
     const isReviewer = authUser ? ['SuperAdmin', 'Developer', 'Officer', 'Government'].includes(authUser.role) : false
     void loadData(authUser?.role === 'SuperAdmin' || authUser?.role === 'Developer', isReviewer)
       .then(setData)
@@ -556,9 +662,80 @@ function App() {
               <kbd>⌘ K</kbd>
             </label>}
             <span className="topbar-divider" />
-            {!isExtensionSection && <button className="icon-button notification-button" aria-label="Notifications">
-              <Icon name="bell" size={19} /><i />
-            </button>}
+            <div className="notification-bell-container" ref={notificationRef}>
+              <button
+                type="button"
+                className="icon-button notification-button"
+                aria-label="Notifications"
+                onClick={() => {
+                  setNotificationsOpen((prev) => !prev)
+                  if (!notificationsOpen) void fetchNotifications()
+                }}
+              >
+                <Icon name="bell" size={19} />
+                {unreadCount > 0 && (
+                  <span className="notification-unread-pill">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </button>
+              {notificationsOpen && (
+                <div className="notification-popover">
+                  <div className="notification-popover-header">
+                    <strong>Notifications ({unreadCount} unread)</strong>
+                    <div className="notification-popover-actions">
+                      {unreadCount > 0 && (
+                        <button
+                          type="button"
+                          className="text-action-link"
+                          onClick={() => void markAllNotificationsRead()}
+                        >
+                          Mark all as read
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="popover-close-btn"
+                        onClick={() => setNotificationsOpen(false)}
+                        aria-label="Close notifications"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                  <div className="notification-list">
+                    {notifications.length === 0 ? (
+                      <div className="notification-empty">
+                        <Icon name="bell" size={24} />
+                        <span>No notifications yet</span>
+                      </div>
+                    ) : (
+                      notifications.map((item) => (
+                        <div
+                          key={item.id}
+                          className={`notification-item ${!item.isRead ? 'unread' : ''}`}
+                          onClick={() => void markNotificationRead(item.id, item.link)}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          {!item.isRead && <span className="notification-dot" />}
+                          <div className="notification-item-content">
+                            <div className="notification-item-top">
+                              {item.category && (
+                                <span className="notification-category-badge">{item.category}</span>
+                              )}
+                              <span className="notification-time">{formatDate(item.createdAt)}</span>
+                            </div>
+                            <strong className="notification-title">{item.title}</strong>
+                            <p className="notification-message">{item.message}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <span className="topbar-date">{todayLabel}</span>
           </div>
         </header>
@@ -990,6 +1167,8 @@ function FarmerOverview({
     data?.farms.reduce((area, farm) => area + farm.areaHectares, 0) ??
     0
   ).toFixed(1)
+  const activeCultivations = safeNum(data?.summary.activeCultivations)
+  const forecastedHarvest = safeNum(data?.summary.forecastedHarvestTonnes)
 
   const farmerMetrics = [
     {
@@ -1003,26 +1182,26 @@ function FarmerOverview({
     {
       title: 'My Mapped Fields',
       value: myFieldsCount,
-      foot: 'GPS mapped field plots',
+      foot: `${myTotalArea} ha mapped footprint`,
       icon: 'map',
       color: 'green',
       section: 'field-map' as Section,
     },
     {
-      title: 'Total Mapped Area',
-      value: `${myTotalArea} ha`,
-      foot: 'Active cultivation footprint',
+      title: 'Active Cultivations',
+      value: activeCultivations,
+      foot: 'Current cycle plantings',
       icon: 'leaf',
       color: 'purple',
-      section: 'field-map' as Section,
+      section: 'cultivation' as Section,
     },
     {
-      title: 'Latest Paddy Prices',
-      value: 'CBSL',
-      foot: 'Official market watch',
+      title: 'Forecasted Yield',
+      value: `${forecastedHarvest.toFixed(1)} MT`,
+      foot: 'Projected paddy output',
       icon: 'chart',
       color: 'orange',
-      section: 'prices' as Section,
+      section: 'intelligence' as Section,
     },
   ]
 
@@ -1148,9 +1327,9 @@ function BuyerOverview({
 }) {
   const buyerMetrics = [
     { title: 'Demand entries', value: data?.summary.demandEntries ?? '—', foot: 'Procurement demand', icon: 'layers', color: 'orange', section: 'demands' as Section },
-    { title: 'Rice varieties', value: data?.summary.varieties ?? '—', foot: 'Procurement profiles', icon: 'leaf', color: 'purple', section: 'varieties' as Section },
+    { title: 'Open Purchase Requests', value: safeNum(data?.summary.openPurchaseRequests), foot: 'Active farmer deals', icon: 'layers', color: 'blue', section: 'demands' as Section },
+    { title: 'National Forecasted Supply', value: `${safeNum(data?.summary.forecastedHarvestTonnes).toFixed(1)} MT`, foot: 'Projected paddy yield', icon: 'leaf', color: 'purple', section: 'intelligence' as Section },
     { title: 'Official Price Watch', value: 'CBSL', foot: 'Daily market report', icon: 'chart', color: 'green', section: 'prices' as Section },
-    { title: 'Weather Stations', value: 25, foot: 'District centers', icon: 'sun', color: 'blue', section: 'weather' as Section },
   ]
 
   const supplies = data?.summary.districtSupplies || []
@@ -1282,6 +1461,10 @@ function FieldVerificationSection({
       const bPending = (b.verificationStatus || 'Pending') === 'Pending'
       if (aPending && !bPending) return -1
       if (!aPending && bPending) return 1
+      if (aPending && bPending) {
+        if (a.isAssignedDistrict && !b.isAssignedDistrict) return -1
+        if (!a.isAssignedDistrict && b.isAssignedDistrict) return 1
+      }
       return 0
     })
   }, [fields])
@@ -1327,6 +1510,9 @@ function FieldVerificationSection({
                   <tr key={field.id}>
                     <td>
                       <strong className="table-primary">{field.name}</strong>
+                      {field.isAssignedDistrict && (
+                        <span className="assigned-priority-badge">★ Assigned Priority</span>
+                      )}
                     </td>
                     <td>
                       <strong className="table-primary">{field.farmName}</strong>
@@ -1408,25 +1594,268 @@ function FieldVerificationSection({
   )
 }
 
+function OfficerAssignmentSection({
+  canManage,
+}: {
+  canManage: boolean
+}) {
+  const [assignments, setAssignments] = useState<OfficerAssignmentItem[]>([])
+  const [assignableOfficers, setAssignableOfficers] = useState<OfficerUserItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [selectedOfficerId, setSelectedOfficerId] = useState('')
+  const [province, setProvince] = useState('')
+  const [district, setDistrict] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
+  const fetchAssignments = useCallback(async () => {
+    try {
+      setLoading(true)
+      const res = await getJson<{
+        assignments: OfficerAssignmentItem[]
+        assignableOfficers: OfficerUserItem[]
+      }>('/api/officer-assignments')
+      setAssignments(res.assignments || [])
+      setAssignableOfficers(res.assignableOfficers || [])
+    } catch (err) {
+      setError(getErrorMessage(err))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void fetchAssignments()
+  }, [fetchAssignments])
+
+  const handleAssign = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!selectedOfficerId || !district) return
+    setSubmitting(true)
+    setError('')
+    try {
+      const res = await fetch('/api/officer-assignments', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: selectedOfficerId,
+          district: district.trim(),
+          province: province.trim() || undefined,
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error || `Failed to assign district (${res.status}).`)
+      }
+      setSelectedOfficerId('')
+      setDistrict('')
+      setProvince('')
+      await fetchAssignments()
+    } catch (err) {
+      setError(getErrorMessage(err))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleRemove = async (id: string) => {
+    setDeletingId(id)
+    setError('')
+    try {
+      const res = await fetch(`/api/officer-assignments/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error || `Failed to remove assignment (${res.status}).`)
+      }
+      await fetchAssignments()
+    } catch (err) {
+      setError(getErrorMessage(err))
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  const availableDistricts = getDistrictsForProvince(province)
+
+  return (
+    <section className="pending-approvals" aria-labelledby="officer-assignments-title" style={{ marginTop: '24px' }}>
+      <div className="pending-approvals-heading">
+        <div>
+          <span className="panel-eyebrow">GOVERNANCE & JURISDICTION</span>
+          <h4 id="officer-assignments-title">
+            {canManage ? 'Officer District Assignments' : 'My Assigned Jurisdictions'}
+          </h4>
+        </div>
+        <span className="record-count">{assignments.length} active assignments</span>
+      </div>
+
+      {error && <p className="user-action-error" role="alert">{error}</p>}
+
+      {canManage && (
+        <form className="officer-assign-form" onSubmit={handleAssign}>
+          <div className="officer-form-row">
+            <label>
+              <span>Agricultural Officer</span>
+              <select
+                value={selectedOfficerId}
+                onChange={(e) => setSelectedOfficerId(e.target.value)}
+                required
+              >
+                <option value="">Select an officer...</option>
+                {assignableOfficers.map((officer) => (
+                  <option key={officer.id} value={officer.id}>
+                    {officer.name} ({officer.email})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Province</span>
+              <input
+                list="assign-provinces"
+                value={province}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setProvince(val)
+                  const valid = getDistrictsForProvince(val)
+                  if (district && !valid.includes(district)) {
+                    setDistrict('')
+                  }
+                }}
+                placeholder="Select or enter province"
+              />
+              <datalist id="assign-provinces">
+                {SRI_LANKA_PROVINCES.map((p) => (
+                  <option key={p} value={p} />
+                ))}
+              </datalist>
+            </label>
+            <label>
+              <span>District *</span>
+              <input
+                list="assign-districts"
+                value={district}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setDistrict(val)
+                  if (!province) {
+                    const matched = getProvinceForDistrict(val)
+                    if (matched) setProvince(matched)
+                  }
+                }}
+                placeholder="Select or enter district"
+                required
+              />
+              <datalist id="assign-districts">
+                {availableDistricts.map((d) => (
+                  <option key={d} value={d} />
+                ))}
+              </datalist>
+            </label>
+            <button
+              type="submit"
+              className="user-approve-button"
+              disabled={submitting || !selectedOfficerId || !district}
+              style={{ minHeight: '38px', padding: '0 16px' }}
+            >
+              {submitting ? 'Assigning...' : 'Assign District'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {assignments.length === 0 ? (
+        <EmptyState
+          loading={loading}
+          label={canManage ? "No officer district assignments yet. Assign an officer above." : "You have not been assigned to any specific districts yet. You can still review all fields."}
+        />
+      ) : (
+        <div className="table-scroll" style={{ marginTop: '12px' }}>
+          <table>
+            <thead>
+              <tr>
+                <th>OFFICER</th>
+                <th>DISTRICT</th>
+                <th>PROVINCE</th>
+                <th>ASSIGNED BY</th>
+                <th>ASSIGNED DATE</th>
+                {canManage && <th>ACTION</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {assignments.map((assignment) => (
+                <tr key={assignment.id}>
+                  <td>
+                    <strong className="table-primary">{assignment.officerName}</strong>
+                    <span className="table-secondary">{assignment.officerEmail}</span>
+                  </td>
+                  <td>
+                    <span className="status-badge status-positive">
+                      <i /> {assignment.district}
+                    </span>
+                  </td>
+                  <td>{assignment.province || '—'}</td>
+                  <td><span className="table-secondary">{assignment.assignedBy || 'Admin'}</span></td>
+                  <td>{formatDate(assignment.assignedDate || assignment.createdAt)}</td>
+                  {canManage && (
+                    <td>
+                      <button
+                        type="button"
+                        className="user-reject-button"
+                        disabled={deletingId === assignment.id}
+                        onClick={() => void handleRemove(assignment.id)}
+                      >
+                        {deletingId === assignment.id ? 'Removing...' : 'Unassign'}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function AdminOverview({
   data,
   loading,
+  authUser,
   canManageUsers,
   onNavigate,
   onVerifyField,
 }: {
   data: AppData | null
   loading: boolean
+  authUser: AuthUser
   canManageUsers: boolean
   onNavigate: (section: Section) => void
   onVerifyField: (fieldId: string, approved: boolean, notes?: string) => Promise<void>
 }) {
-  const metrics = [
-    { title: 'Network members', value: data?.summary.users ?? '—', foot: 'Across the network', icon: 'users', color: 'green', section: (canManageUsers ? 'users' : 'overview') as Section },
-    { title: 'Registered farms', value: data?.summary.farms ?? '—', foot: `${data?.farms.reduce((area, farm) => area + farm.areaHectares, 0).toFixed(1) ?? '0.0'} ha registered`, icon: 'farm', color: 'blue', section: 'farms' as Section },
-    { title: 'Pending Verifications', value: data?.summary.pendingFieldVerifications ?? 0, foot: 'Fields awaiting review', icon: 'map', color: 'orange', section: 'field-map' as Section },
-    { title: 'Verified Fields', value: data?.summary.verifiedFields ?? 0, foot: 'Approved GPS boundaries', icon: 'leaf', color: 'purple', section: 'field-map' as Section },
-  ]
+  const isOfficer = authUser.role === 'Officer'
+  const canAssignOfficers = ['SuperAdmin', 'Developer', 'Government'].includes(authUser.role)
+  const canViewOfficerAssignments = ['SuperAdmin', 'Developer', 'Government', 'Officer'].includes(authUser.role)
+
+  const metrics = isOfficer
+    ? [
+        { title: 'Pending Verifications', value: data?.summary.pendingFieldVerifications ?? 0, foot: 'Fields awaiting review', icon: 'map', color: 'orange', section: 'field-map' as Section },
+        { title: 'Verified Fields', value: data?.summary.verifiedFields ?? 0, foot: 'Approved GPS boundaries', icon: 'leaf', color: 'green', section: 'field-map' as Section },
+        { title: 'Active Cultivations', value: safeNum(data?.summary.activeCultivations), foot: 'Monitored plantings', icon: 'calendar', color: 'blue', section: 'cultivation' as Section },
+        { title: 'Forecasted Harvest', value: `${safeNum(data?.summary.forecastedHarvestTonnes).toFixed(1)} MT`, foot: 'Regional yield forecast', icon: 'chart', color: 'purple', section: 'intelligence' as Section },
+      ]
+    : [
+        { title: 'Network members', value: data?.summary.users ?? '—', foot: 'Across the network', icon: 'users', color: 'green', section: (canManageUsers ? 'users' : 'overview') as Section },
+        { title: 'Registered farms', value: data?.summary.farms ?? '—', foot: `${data?.farms.reduce((area, farm) => area + farm.areaHectares, 0).toFixed(1) ?? '0.0'} ha registered`, icon: 'farm', color: 'blue', section: 'farms' as Section },
+        { title: 'Pending Verifications', value: data?.summary.pendingFieldVerifications ?? 0, foot: 'Fields awaiting review', icon: 'map', color: 'orange', section: 'field-map' as Section },
+        { title: 'Active Cultivations', value: safeNum(data?.summary.activeCultivations), foot: `${safeNum(data?.summary.forecastedHarvestTonnes).toFixed(1)} MT forecasted`, icon: 'leaf', color: 'purple', section: 'cultivation' as Section },
+      ]
 
   return (
     <>
@@ -1474,6 +1903,12 @@ function AdminOverview({
         onVerify={onVerifyField}
         refreshing={loading}
       />
+
+      {canViewOfficerAssignments && (
+        <OfficerAssignmentSection
+          canManage={canAssignOfficers}
+        />
+      )}
 
       <div className="dashboard-grid">
         <section className="panel recent-panel">
@@ -1552,6 +1987,7 @@ function Overview({
     <AdminOverview
       data={data}
       loading={loading}
+      authUser={authUser}
       canManageUsers={canManageUsers}
       onNavigate={onNavigate}
       onVerifyField={onVerifyField}

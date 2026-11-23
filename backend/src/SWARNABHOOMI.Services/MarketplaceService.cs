@@ -187,7 +187,9 @@ public interface IMarketplaceService
         CancellationToken cancellationToken = default);
 }
 
-public sealed class MarketplaceService(SWARNABHOOMIContext db) : IMarketplaceService
+public sealed class MarketplaceService(
+    SWARNABHOOMIContext db,
+    IGovernanceNotificationService notificationService) : IMarketplaceService
 {
     public async Task<IReadOnlyList<DemandDto>> GetDemandsAsync(
         DemandQueryFilter filter,
@@ -941,6 +943,15 @@ public sealed class MarketplaceService(SWARNABHOOMIContext db) : IMarketplaceSer
         });
 
         await db.SaveChangesAsync(cancellationToken);
+
+        // Trigger in-app notification to matching farmers
+        await notificationService.NotifyPurchaseRequestSubmittedAsync(
+            pr.Id,
+            pr.FarmerId,
+            demandItem.Demand.District,
+            demandItem.RiceVariety?.Name ?? "Paddy",
+            pr.QuantityKg,
+            cancellationToken);
 
         var buyer = await db.Users
             .AsNoTracking()

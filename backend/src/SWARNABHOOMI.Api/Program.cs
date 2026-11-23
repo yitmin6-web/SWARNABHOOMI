@@ -10,6 +10,7 @@ using SWARNABHOOMI.Core.Enums;
 using SWARNABHOOMI.Api.Authentication;
 using SWARNABHOOMI.Api.Cultivation;
 using SWARNABHOOMI.Api.FieldMap;
+using SWARNABHOOMI.Api.Governance;
 using SWARNABHOOMI.Api.HarvestAndStock;
 using SWARNABHOOMI.Api.Intelligence;
 using SWARNABHOOMI.Api.LiveData;
@@ -43,6 +44,7 @@ builder.Services.AddHttpClient("cbsl-prices", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("SWARNABHOOMI/1.0");
 });
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+builder.Services.AddScoped<IGovernanceNotificationService, GovernanceNotificationService>();
 builder.Services.AddScoped<IDashboardOverviewService, DashboardOverviewService>();
 builder.Services.AddScoped<IRiceIntelligenceService, RiceIntelligenceService>();
 builder.Services.AddScoped<ICultivationService, CultivationService>();
@@ -162,6 +164,7 @@ app.MapHarvestAndStockEndpoints();
 app.MapAssistantEndpoints();
 app.MapMemberDetailsEndpoints();
 app.MapMarketplaceEndpoints();
+app.MapGovernanceEndpoints();
 
 var api = app.MapGroup("/api").RequireAuthorization();
 

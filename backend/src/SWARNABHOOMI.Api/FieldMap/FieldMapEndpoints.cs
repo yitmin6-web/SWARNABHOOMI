@@ -27,11 +27,13 @@ public static class FieldMapEndpoints
     private static async Task<IResult> GetMap(
         ClaimsPrincipal principal,
         SWARNABHOOMIContext db,
+        IGovernanceNotificationService governanceService,
         CancellationToken cancellationToken)
     {
         var role = principal.FindFirstValue(ClaimTypes.Role);
         var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
         var query = db.Fields.AsNoTracking().Include(field => field.Farm).ThenInclude(farm => farm.User).AsQueryable();
+        var assignedDistricts = new List<string>();
 
         if (role == "Farmer")
         {
@@ -49,15 +51,10 @@ public static class FieldMapEndpoints
                 return Results.Forbid();
             }
 
-            var districts = await db.OfficerAssignments
-                .AsNoTracking()
-                .Where(assignment => assignment.UserId == officerId && assignment.IsActive)
-                .Select(assignment => assignment.District)
-                .Distinct()
-                .ToListAsync(cancellationToken);
+            assignedDistricts = (await governanceService.GetAssignedDistrictsForOfficerAsync(officerId, cancellationToken)).ToList();
 
             query = query.Where(field =>
-                field.Farm.District != null && districts.Contains(field.Farm.District));
+                field.Farm.District != null && assignedDistricts.Contains(field.Farm.District));
         }
         else if (role is not ("Government" or "Buyer" or "SuperAdmin" or "Developer"))
         {
@@ -118,7 +115,8 @@ public static class FieldMapEndpoints
             field.LatestVerification?.Status ?? "Pending",
             field.LatestVerification?.ReviewNotes,
             field.LatestVerification?.ReviewedAt,
-            field.FarmerName));
+            field.FarmerName,
+            field.District != null && assignedDistricts.Contains(field.District)));
 
         return Results.Ok(new FieldMapResponse("fields", visibleFields, []));
     }
@@ -273,6 +271,7 @@ public static class FieldMapEndpoints
     private static async Task<IResult> GetVerificationQueue(
         ClaimsPrincipal principal,
         SWARNABHOOMIContext db,
+        IGovernanceNotificationService governanceService,
         CancellationToken cancellationToken)
     {
         var role = principal.FindFirstValue(ClaimTypes.Role);
@@ -280,6 +279,12 @@ public static class FieldMapEndpoints
             !Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
         {
             return Results.Forbid();
+        }
+
+        var assignedDistricts = new List<string>();
+        if (role == "Officer")
+        {
+            assignedDistricts = (await governanceService.GetAssignedDistrictsForOfficerAsync(userId, cancellationToken)).ToList();
         }
 
         var query = db.Fields
@@ -291,19 +296,13 @@ public static class FieldMapEndpoints
                 field.Verifications.OrderByDescending(v => v.CreatedAt).Select(v => v.Status).FirstOrDefault() == "Pending")
             .AsQueryable();
 
-        if (role == "Officer")
+        if (role == "Officer" && assignedDistricts.Count > 0)
         {
-            var districts = await db.OfficerAssignments
-                .AsNoTracking()
-                .Where(assignment => assignment.UserId == userId && assignment.IsActive)
-                .Select(assignment => assignment.District)
-                .Distinct()
-                .ToListAsync(cancellationToken);
             query = query.Where(field =>
-                field.Farm.District != null && districts.Contains(field.Farm.District));
+                field.Farm.District != null && assignedDistricts.Contains(field.Farm.District));
         }
 
-        var queue = await query
+        var rawQueue = await query
             .OrderBy(field => field.CreatedAt)
             .Select(field => new
             {
@@ -329,6 +328,27 @@ public static class FieldMapEndpoints
             })
             .ToListAsync(cancellationToken);
 
+        var queue = rawQueue.Select(field => new
+        {
+            field.id,
+            field.fieldId,
+            field.fieldName,
+            field.farmName,
+            field.ownerName,
+            field.farmerName,
+            field.areaHectares,
+            field.boundaryGeoJson,
+            field.district,
+            field.province,
+            field.reviewNotes,
+            field.status,
+            field.submittedAt,
+            isAssignedDistrict = field.district != null && assignedDistricts.Contains(field.district)
+        })
+        .OrderByDescending(f => f.isAssignedDistrict)
+        .ThenBy(f => f.submittedAt)
+        .ToList();
+
         return Results.Ok(queue);
     }
 
@@ -338,6 +358,7 @@ public static class FieldMapEndpoints
         ClaimsPrincipal principal,
         SWARNABHOOMIContext db,
         IRiceIntelligenceService intelligenceService,
+        IGovernanceNotificationService governanceService,
         CancellationToken cancellationToken)
     {
         var role = principal.FindFirstValue(ClaimTypes.Role);
@@ -414,6 +435,12 @@ public static class FieldMapEndpoints
 
         await intelligenceService.RecalculateForecastsForFieldAsync(fieldId, cancellationToken);
 
+        await governanceService.NotifyFieldVerificationDecisionAsync(
+            fieldId,
+            request.Status == "Verified",
+            request.Notes?.Trim(),
+            cancellationToken);
+
         return Results.Ok(new { fieldId, verification.Status, verification.ReviewedAt, verification.ReviewNotes });
     }
 
@@ -423,6 +450,7 @@ public static class FieldMapEndpoints
         ClaimsPrincipal principal,
         SWARNABHOOMIContext db,
         IRiceIntelligenceService intelligenceService,
+        IGovernanceNotificationService governanceService,
         CancellationToken cancellationToken)
     {
         var role = principal.FindFirstValue(ClaimTypes.Role);
@@ -497,6 +525,12 @@ public static class FieldMapEndpoints
 
         await intelligenceService.RecalculateForecastsForFieldAsync(id, cancellationToken);
 
+        await governanceService.NotifyFieldVerificationDecisionAsync(
+            id,
+            request.Approved,
+            notes,
+            cancellationToken);
+
         return Results.Ok(new
         {
             fieldId = id,
@@ -556,7 +590,8 @@ public sealed record FieldMapItem(
     string VerificationStatus,
     string? VerifierNotes = null,
     DateTime? VerifiedAt = null,
-    string? FarmerName = null);
+    string? FarmerName = null,
+    bool? IsAssignedDistrict = null);
 
 public sealed record FieldRegionSummary(
     string District,
