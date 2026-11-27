@@ -704,21 +704,21 @@ export default function MarketplacePage({ role = 'Farmer' }: { role?: string }) 
                 className={`subnav-tab ${activeTab === 'gaps' ? 'active' : ''}`}
                 onClick={() => setActiveTab('gaps')}
               >
-                ⚖️ National Supply vs Demand Gaps
+                 National Supply vs Demand Gaps
               </button>
               <button
                 type="button"
                 className={`subnav-tab ${activeTab === 'all-demands' ? 'active' : ''}`}
                 onClick={() => setActiveTab('all-demands')}
               >
-                📜 All Market Demands ({demands.length})
+                 All Market Demands ({demands.length})
               </button>
               <button
                 type="button"
                 className={`subnav-tab ${activeTab === 'all-orders' ? 'active' : ''}`}
                 onClick={() => setActiveTab('all-orders')}
               >
-                🤝 Trade Orders & Agreements ({purchaseRequests.length})
+                 Trade Orders & Agreements ({purchaseRequests.length})
               </button>
             </>
           )}

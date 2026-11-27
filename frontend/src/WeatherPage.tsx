@@ -29,6 +29,21 @@ function weatherDescription(code: number) {
   return 'Conditions unavailable'
 }
 
+function weatherVisual(code: number) {
+  if (code === 0) return { icon: '☀️', tone: 'sunny', label: 'Sunny' }
+  if (code === 1) return { icon: '🌤️', tone: 'sunny', label: 'Mostly sunny' }
+  if (code === 2) return { icon: '⛅', tone: 'cloudy', label: 'Partly cloudy' }
+  if (code === 3) return { icon: '☁️', tone: 'cloudy', label: 'Overcast' }
+  if (code === 45 || code === 48) return { icon: '🌫️', tone: 'fog', label: 'Foggy' }
+  if ([51, 53, 55, 56, 57].includes(code)) return { icon: '🌦️', tone: 'rain', label: 'Drizzle' }
+  if ([61, 63, 65, 66, 67].includes(code)) return { icon: '🌧️', tone: 'rain', label: 'Rain' }
+  if ([71, 73, 75, 77].includes(code)) return { icon: '🌨️', tone: 'snow', label: 'Snow' }
+  if ([80, 81, 82].includes(code)) return { icon: '🌧️', tone: 'rain', label: 'Rain showers' }
+  if ([85, 86].includes(code)) return { icon: '🌨️', tone: 'snow', label: 'Snow showers' }
+  if ([95, 96, 99].includes(code)) return { icon: '⛈️', tone: 'storm', label: 'Thunderstorm' }
+  return { icon: '🌡️', tone: 'default', label: 'Weather' }
+}
+
 function formatUpdatedAt(value: string) {
   const date = new Date(value)
   return Number.isNaN(date.getTime())
@@ -114,22 +129,28 @@ export default function WeatherPage() {
 
         {visibleDistricts.length > 0 && (
           <div className="live-weather-grid">
-            {visibleDistricts.map((district) => (
-              <article className="live-weather-card" key={district.district}>
-                <div className="live-weather-card-heading">
-                  <strong>{district.district}</strong>
-                  <span>{district.observationTime.replace('T', ' ')} SLST</span>
-                </div>
-                <div className="live-weather-main">
-                  <strong>{district.temperatureC.toFixed(1)}°C</strong>
-                  <span>{weatherDescription(district.weatherCode)}</span>
-                </div>
-                <div className="live-weather-facts">
-                  <span>Humidity <strong>{Math.round(district.humidityPercent)}%</strong></span>
-                  <span>Precipitation <strong>{district.precipitationMm.toFixed(1)} mm</strong></span>
-                </div>
-              </article>
-            ))}
+            {visibleDistricts.map((district) => {
+              const visual = weatherVisual(district.weatherCode)
+              return (
+                <article className={`live-weather-card weather-tone-${visual.tone}`} key={district.district}>
+                  <div className="live-weather-card-heading">
+                    <strong>{district.district}</strong>
+                    <span>{district.observationTime.replace('T', ' ')} SLST</span>
+                  </div>
+                  <div className="live-weather-main">
+                    <span className="live-weather-icon" role="img" aria-label={visual.label}>{visual.icon}</span>
+                    <div className="live-weather-reading">
+                      <strong>{district.temperatureC.toFixed(1)}°C</strong>
+                      <span>{weatherDescription(district.weatherCode)}</span>
+                    </div>
+                  </div>
+                  <div className="live-weather-facts">
+                    <span>Humidity <strong>{Math.round(district.humidityPercent)}%</strong></span>
+                    <span>Precipitation <strong>{district.precipitationMm.toFixed(1)} mm</strong></span>
+                  </div>
+                </article>
+              )
+            })}
           </div>
         )}
 

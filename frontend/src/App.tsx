@@ -1,5 +1,6 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ErrorInfo, FormEvent, ReactNode } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
 import './App.css'
 import './FeaturePages.css'
 import AssistantConfigPage from './AssistantConfigPage'
@@ -11,6 +12,7 @@ import FieldMapPage from './FieldMapPage'
 import MarketPricesPage from './MarketPricesPage'
 import MemberDetailsPage from './MemberDetailsPage'
 import WeatherPage from './WeatherPage'
+import DecorativeLeaf from './components/DecorativeLeaf'
 import {
   SRI_LANKA_PROVINCES,
   getDistrictsForProvince,
@@ -587,8 +589,8 @@ function App() {
     <div className="app-shell">
       <aside className={`sidebar ${mobileNavOpen ? 'sidebar-open' : ''}`}>
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setActiveSection('overview') }}>
-          <span className="brand-mark"><Icon name="leaf" size={23} /></span>
-          <span className="brand-name">swarnabhoomi<span>.</span><small>RICE NETWORK</small></span>
+          <span className="brand-mark"><img src="/swarnabhoomi-logo-full.png" alt="" /></span>
+          <span className="brand-name">Swarnabhoomi<span></span><small>RICE NETWORK</small></span>
         </a>
 
         <div className="workspace-picker">
@@ -839,7 +841,7 @@ function App() {
 function LoadingScreen() {
   return (
     <main className="auth-loading" aria-label="Checking your session">
-      <span className="auth-loading-mark"><Icon name="leaf" size={23} /></span>
+      <span className="auth-loading-mark"><img src="/swarnabhoomi-logo-full.png" alt="Swarnabhoomi logo" /></span>
       <span className="loader" />
       <p>Preparing your workspace…</p>
     </main>
@@ -875,6 +877,7 @@ function LoginPage({
 }) {
   const formRef = useRef<HTMLElement | null>(null)
   const emailRef = useRef<HTMLInputElement | null>(null)
+  const reduceMotion = useReducedMotion()
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -888,6 +891,10 @@ function LoginPage({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [registrationNotice, setRegistrationNotice] = useState('')
+
+  const introRise = reduceMotion
+    ? {}
+    : { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 } }
 
   const focusLogin = () => {
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -928,7 +935,7 @@ function LoginPage({
     <div className="login-shell">
       <header className="login-topbar">
         <a className="login-brand" href="/" aria-label="Swarnabhoomi home">
-          <span className="brand-mark"><Icon name="leaf" size={23} /></span>
+          <span className="brand-mark"><img src="/swarnabhoomi-logo-full.png" alt="" /></span>
           <span className="brand-name">swarnabhoomi<span>.</span><small>RICE NETWORK</small></span>
         </a>
         <div className="login-top-action">
@@ -951,12 +958,19 @@ function LoginPage({
       <main className="login-layout">
         <section className="login-left">
           <div className="login-intro">
-            <div className="login-eyebrow"><span /> A CONNECTED RICE COMMUNITY</div>
-            <h1>Rooted here.<br /><em>Growing together.</em></h1>
-            <p>Sign in to stay close to your farms, your market and the people growing Sri Lanka’s next harvest.</p>
+            <motion.div className="login-eyebrow" {...introRise} transition={{ duration: reduceMotion ? 0 : 0.45 }}><span /> A CONNECTED RICE COMMUNITY</motion.div>
+            <motion.h1 {...introRise} transition={{ duration: reduceMotion ? 0 : 0.55, delay: reduceMotion ? 0 : 0.08 }}>Rooted here.<br /><em>Growing together.</em></motion.h1>
+            <motion.p {...introRise} transition={{ duration: reduceMotion ? 0 : 0.55, delay: reduceMotion ? 0 : 0.16 }}>Sign in to stay close to your farms, your market and the people growing Sri Lanka’s next harvest.</motion.p>
           </div>
 
-          <section className="login-form-panel" ref={formRef} aria-labelledby="login-title">
+          <motion.section
+            className="login-form-panel"
+            ref={formRef}
+            aria-labelledby="login-title"
+            initial={reduceMotion ? false : { opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.55, ease: 'easeOut' }}
+          >
             <span className="form-kicker">{mode === 'login' ? 'YOUR WORKSPACE AWAITS' : 'JOIN THE RICE NETWORK'}</span>
             <h2 id="login-title">{mode === 'login' ? 'Welcome back' : 'Create your account'}</h2>
             <p className="form-description">
@@ -1088,6 +1102,7 @@ function LoginPage({
                     className="password-toggle"
                     onClick={() => setShowPassword((visible) => !visible)}
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    aria-pressed={showPassword}
                   >
                     {showPassword ? 'Hide' : 'Show'}
                   </button>
@@ -1122,10 +1137,11 @@ function LoginPage({
                 <>Already registered? <button type="button" onClick={() => { setMode('login'); setError('') }}>Sign in</button></>
               )}
             </p>
-          </section>
+          </motion.section>
         </section>
 
         <aside className="login-visual" aria-label="Swarnabhoomi rice fields">
+          <DecorativeLeaf />
           <div className="visual-topline"><span>GROWN WITH PURPOSE</span><span>EST. SRI LANKA</span></div>
           <div className="visual-sun" />
           <div className="visual-mountain visual-mountain-back" />
@@ -1536,7 +1552,6 @@ function FieldVerificationSection({
                         }`}
                         style={isRejected ? { color: '#991b1b', background: '#fee2e2' } : undefined}
                       >
-                        <i style={isRejected ? { background: '#ef4444' } : undefined} />
                         {status}
                       </span>
                     </td>
@@ -1560,7 +1575,7 @@ function FieldVerificationSection({
                           }}
                         />
                       ) : (
-                        <span className="table-secondary">{field.verifierNotes || '—'}</span>
+                        <span className="table-secondary">{field.verifierNotes || remarks[field.id] || '—'}</span>
                       )}
                     </td>
                     <td>
@@ -2141,4 +2156,4 @@ function EmptyState({ loading, label }: { loading: boolean; label: string }) {
   return <div className="empty-state"><span className="empty-icon"><Icon name="leaf" size={20} /></span><span>{loading ? 'Loading live records…' : label}</span></div>
 }
 
-export default App
+export default App;
