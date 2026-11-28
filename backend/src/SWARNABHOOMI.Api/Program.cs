@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Http.Headers;
 using System.Threading.RateLimiting;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -41,7 +43,21 @@ builder.Services.AddHttpClient("open-meteo", client =>
 builder.Services.AddHttpClient("cbsl-prices", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(20);
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("SWARNABHOOMI/1.0");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+    client.DefaultRequestHeaders.TryAddWithoutValidation(
+        "Accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf,*/*;q=0.8");
+    client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+    client.DefaultRequestHeaders.Referrer = new Uri("https://www.cbsl.gov.lk/en/statistics/economic-indicators");
+    client.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true };
+})
+.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+{
+    AutomaticDecompression = DecompressionMethods.All,
+    AllowAutoRedirect = true,
+    UseCookies = true,
+    CookieContainer = new CookieContainer()
 });
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddScoped<IGovernanceNotificationService, GovernanceNotificationService>();

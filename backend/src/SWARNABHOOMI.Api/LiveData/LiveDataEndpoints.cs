@@ -1,6 +1,10 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
+using SWARNABHOOMI.Infrastructure.Data;
 
 namespace SWARNABHOOMI.Api.LiveData;
 
@@ -8,9 +12,19 @@ public static class LiveDataEndpoints
 {
     private const string OpenMeteoSource = "https://open-meteo.com/en/docs";
     private const string OpenMeteoAttribution = "Weather data by Open-Meteo.com";
+    private const string CbslBaseUrl = "https://www.cbsl.gov.lk";
     private const string CbslReportPage = "https://www.cbsl.gov.lk/en/statistics/economic-indicators/price-report";
+    private const string CbslPdfPrefix = "https://www.cbsl.gov.lk/sites/default/files/cbslweb_documents/statistics/pricerpt";
+    private const string CbslSourceName = "Central Bank of Sri Lanka";
+    private const string CbslUpdateNote = "Daily report for selected markets; prices are published observations, not live trading quotes.";
+    private const string CbslLiveCacheKey = "cbsl:market-price-report:live";
+    private const string CbslFailureCacheKey = "cbsl:market-price-report:probe-failed";
+    private static readonly TimeSpan LiveReportCacheDuration = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan FailedProbeCooldown = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan DirectProbeTimeout = TimeSpan.FromSeconds(5);
+
     private static readonly Regex CbslReportLink = new(
-        @"href\s*=\s*[""'](?<url>(?:https?://www\.cbsl\.gov\.lk)?/sites/default/files/cbslweb_documents/statistics/pricerpt/price_report_(?<date>\d{8})_e\.pdf)[""']",
+        @"href\s*=\s*[""'](?<url>(?:https?://www\.cbsl\.gov\.lk)?/sites/default/files/cbslweb_documents/statistics/pricerpt/price_report_(?<date>\d{8})(?:_e)?\.pdf)[""']",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly DistrictCenter[] Districts =
@@ -160,19 +174,89 @@ public static class LiveDataEndpoints
 
     private static async Task<IResult> GetLatestMarketPriceReport(
         IHttpClientFactory httpClientFactory,
+        SWARNABHOOMIContext db,
+        IMemoryCache cache,
+        ILogger<LiveDataEndpointLoggerCategory> logger,
+        CancellationToken cancellationToken,
+        [FromQuery] bool forceRefresh = false)
+    {
+        if (!forceRefresh)
+        {
+            if (cache.TryGetValue(CbslLiveCacheKey, out LatestMarketPriceReport? cachedLive) &&
+                cachedLive is not null)
+            {
+                return Results.Ok(cachedLive);
+            }
+
+            if (cache.TryGetValue(CbslFailureCacheKey, out string? cachedFailureReason) &&
+                !string.IsNullOrWhiteSpace(cachedFailureReason))
+            {
+                return await BuildDatabaseFallbackResultAsync(db, logger, cachedFailureReason, cancellationToken);
+            }
+        }
+
+        var client = httpClientFactory.CreateClient("cbsl-prices");
+        int? lastBlockedStatus = null;
+
+        // Stage 1: Scrape the CBSL daily price report index page with browser fetch headers.
+        var stage1 = await TryFetchFromIndexPageAsync(client, logger, cancellationToken);
+        if (stage1.Report is not null)
+        {
+            var observations = await LoadLatestObservationsAsync(db, cancellationToken);
+            var report = BuildLiveReport(stage1.Report.Date, stage1.Report.PdfUrl, observations);
+            cache.Set(CbslLiveCacheKey, report, LiveReportCacheDuration);
+            cache.Remove(CbslFailureCacheKey);
+            return Results.Ok(report);
+        }
+
+        lastBlockedStatus = stage1.StatusCode;
+
+        // Stage 2: Probe deterministic static CBSL PDF URLs backward up to 7 calendar days (SLT).
+        var stage2 = await TryProbeDeterministicPdfUrlsAsync(client, logger, cancellationToken);
+        if (stage2.Report is not null)
+        {
+            var observations = await LoadLatestObservationsAsync(db, cancellationToken);
+            var report = BuildLiveReport(stage2.Report.Date, stage2.Report.PdfUrl, observations);
+            cache.Set(CbslLiveCacheKey, report, LiveReportCacheDuration);
+            cache.Remove(CbslFailureCacheKey);
+            return Results.Ok(report);
+        }
+
+        lastBlockedStatus ??= stage2.StatusCode;
+
+        // Stage 3: Cache the failed live probe briefly and fall back to persisted database observations.
+        var failureReason = lastBlockedStatus switch
+        {
+            StatusCodes.Status403Forbidden => "Live CBSL feed returned HTTP 403; displaying latest verified market price observations.",
+            int statusCode => $"Live CBSL feed returned HTTP {statusCode}; displaying latest verified market price observations.",
+            _ => "Live CBSL feed is temporarily unreachable; displaying latest verified market price observations."
+        };
+
+        cache.Set(CbslFailureCacheKey, failureReason, FailedProbeCooldown);
+        return await BuildDatabaseFallbackResultAsync(db, logger, failureReason, cancellationToken);
+    }
+
+    private static async Task<(CbslPdfMatch? Report, int? StatusCode)> TryFetchFromIndexPageAsync(
+        HttpClient client,
         ILogger<LiveDataEndpointLoggerCategory> logger,
         CancellationToken cancellationToken)
     {
         try
         {
-            var client = httpClientFactory.CreateClient("cbsl-prices");
-            using var response = await client.GetAsync(CbslReportPage, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var request = new HttpRequestMessage(HttpMethod.Get, CbslReportPage);
+            request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "document");
+            request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "navigate");
+            request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
+            request.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
+
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
-                logger.LogError("CBSL returned HTTP {StatusCode} for the daily price report index.", (int)response.StatusCode);
-                return Results.Problem(
-                    "The latest CBSL price report is temporarily unavailable.",
-                    statusCode: StatusCodes.Status502BadGateway);
+                var statusCode = (int)response.StatusCode;
+                logger.LogWarning(
+                    "CBSL returned HTTP {StatusCode} for the daily price report index; falling back to direct PDF probing.",
+                    statusCode);
+                return (null, statusCode);
             }
 
             var html = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -186,46 +270,282 @@ public static class LiveDataEndpoints
                         CultureInfo.InvariantCulture,
                         DateTimeStyles.None,
                         out var date)
-                        ? new { Date = date, Url = match.Groups["url"].Value }
+                        ? new
+                        {
+                            Date = date,
+                            Url = match.Groups["url"].Value,
+                            IsEnglish = match.Groups["url"].Value.EndsWith("_e.pdf", StringComparison.OrdinalIgnoreCase)
+                        }
                         : null;
                 })
                 .Where(report => report is not null)
                 .OrderByDescending(report => report!.Date)
+                .ThenByDescending(report => report!.IsEnglish)
                 .FirstOrDefault();
 
             if (latestReport is null)
             {
-                logger.LogError("No CBSL daily price report links were found on the official report page.");
-                return Results.Problem(
-                    "No current CBSL daily price report was found.",
-                    statusCode: StatusCodes.Status502BadGateway);
+                logger.LogWarning(
+                    "No CBSL daily price report links matched on the official report page; falling back to direct PDF probing.");
+                return (null, null);
             }
 
-            var pdfUri = new Uri(new Uri("https://www.cbsl.gov.lk"), latestReport.Url);
-            return Results.Ok(new LatestMarketPriceReport(
-                latestReport.Date,
-                pdfUri.AbsoluteUri,
-                CbslReportPage,
-                "Central Bank of Sri Lanka",
-                "Daily report for selected markets; prices are published observations, not live trading quotes.",
-                DateTimeOffset.UtcNow));
+            var pdfUri = new Uri(new Uri(CbslBaseUrl), latestReport.Url);
+            return (new CbslPdfMatch(latestReport.Date, pdfUri.AbsoluteUri), StatusCodes.Status200OK);
         }
         catch (HttpRequestException exception)
         {
-            logger.LogError(exception, "Unable to retrieve the latest CBSL price report.");
+            logger.LogWarning(exception, "CBSL index request failed; falling back to direct PDF probing.");
+            return (null, null);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogWarning(exception, "The CBSL index request timed out; falling back to direct PDF probing.");
+            return (null, StatusCodes.Status504GatewayTimeout);
+        }
+    }
+
+    private static async Task<(CbslPdfMatch? Report, int? StatusCode)> TryProbeDeterministicPdfUrlsAsync(
+        HttpClient client,
+        ILogger<LiveDataEndpointLoggerCategory> logger,
+        CancellationToken cancellationToken)
+    {
+        var todaySlt = GetSriLankaToday();
+        int? lastBlockedStatus = null;
+        var consecutiveTimeouts = 0;
+
+        for (var offset = 0; offset < 7; offset++)
+        {
+            var candidateDate = todaySlt.AddDays(-offset);
+            if (candidateDate.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+            {
+                continue;
+            }
+
+            var dateStamp = candidateDate.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+            string[] candidates =
+            [
+                $"{CbslPdfPrefix}/price_report_{dateStamp}_e.pdf",
+                $"{CbslPdfPrefix}/price_report_{dateStamp}.pdf"
+            ];
+
+            foreach (var candidateUrl in candidates)
+            {
+                using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                probeCts.CancelAfter(DirectProbeTimeout);
+
+                try
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Get, candidateUrl);
+                    request.Headers.TryAddWithoutValidation("Accept", "application/pdf,*/*;q=0.8");
+                    request.Headers.Referrer = new Uri(CbslReportPage);
+                    request.Headers.TryAddWithoutValidation("Sec-Fetch-Dest", "document");
+                    request.Headers.TryAddWithoutValidation("Sec-Fetch-Mode", "navigate");
+                    request.Headers.TryAddWithoutValidation("Sec-Fetch-Site", "same-origin");
+
+                    using var response = await client.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        probeCts.Token);
+
+                    consecutiveTimeouts = 0;
+
+                    if (response.IsSuccessStatusCode && await IsValidPdfResponseAsync(response, probeCts.Token))
+                    {
+                        logger.LogInformation(
+                            "Resolved CBSL daily price report via direct PDF probe for {ReportDate}.",
+                            candidateDate);
+                        return (new CbslPdfMatch(candidateDate, candidateUrl), StatusCodes.Status200OK);
+                    }
+
+                    var statusCode = (int)response.StatusCode;
+                    if (statusCode is StatusCodes.Status403Forbidden or StatusCodes.Status429TooManyRequests or StatusCodes.Status503ServiceUnavailable)
+                    {
+                        lastBlockedStatus ??= statusCode;
+                    }
+                }
+                catch (HttpRequestException)
+                {
+                    // Continue probing remaining deterministic candidate URLs.
+                }
+                catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    consecutiveTimeouts++;
+                    lastBlockedStatus ??= StatusCodes.Status504GatewayTimeout;
+                    if (consecutiveTimeouts >= 3)
+                    {
+                        logger.LogWarning("CBSL direct PDF probing timed out repeatedly; proceeding to database fallback.");
+                        return (null, lastBlockedStatus);
+                    }
+                }
+            }
+        }
+
+        if (lastBlockedStatus is not null)
+        {
+            logger.LogWarning(
+                "CBSL direct PDF probing was blocked or timed out (HTTP {StatusCode}).",
+                lastBlockedStatus);
+        }
+
+        return (null, lastBlockedStatus);
+    }
+
+    private static async Task<bool> IsValidPdfResponseAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var mediaType = response.Content.Headers.ContentType?.MediaType;
+        var hasPdfMediaType = string.Equals(mediaType, "application/pdf", StringComparison.OrdinalIgnoreCase);
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var signature = new byte[4];
+        var totalRead = 0;
+
+        while (totalRead < signature.Length)
+        {
+            var bytesRead = await stream.ReadAsync(signature.AsMemory(totalRead, signature.Length - totalRead), cancellationToken);
+            if (bytesRead == 0)
+            {
+                break;
+            }
+            totalRead += bytesRead;
+        }
+
+        var startsWithPdfMagic = totalRead == 4 &&
+            signature[0] == (byte)'%' &&
+            signature[1] == (byte)'P' &&
+            signature[2] == (byte)'D' &&
+            signature[3] == (byte)'F';
+
+        return startsWithPdfMagic || (hasPdfMediaType && totalRead > 0);
+    }
+
+    private static async Task<IReadOnlyList<MarketPriceObservationItem>> LoadLatestObservationsAsync(
+        SWARNABHOOMIContext db,
+        CancellationToken cancellationToken)
+    {
+        var raw = await db.MarketPriceObservations
+            .AsNoTracking()
+            .Include(observation => observation.RiceVariety)
+            .OrderByDescending(observation => observation.ObservationDate)
+            .ThenByDescending(observation => observation.CreatedAt)
+            .Select(observation => new
+            {
+                observation.Id,
+                observation.Market,
+                observation.RiceVarietyId,
+                RiceVarietyName = observation.RiceVariety.Name,
+                VarietyCode = observation.RiceVariety.VarietyCode,
+                observation.Grade,
+                observation.PriceType,
+                observation.Value,
+                observation.Currency,
+                observation.Unit,
+                observation.ObservationDate,
+                observation.PublicationDate,
+                observation.Source
+            })
+            .Take(50)
+            .ToListAsync(cancellationToken);
+
+        return raw.Select(observation => new MarketPriceObservationItem(
+            observation.Id,
+            observation.Market,
+            observation.RiceVarietyId,
+            observation.RiceVarietyName,
+            observation.VarietyCode,
+            observation.Grade,
+            observation.PriceType,
+            observation.Value,
+            observation.Currency,
+            observation.Unit,
+            observation.ObservationDate,
+            observation.PublicationDate,
+            observation.Source))
+            .ToList();
+    }
+
+    private static async Task<IResult> BuildDatabaseFallbackResultAsync(
+        SWARNABHOOMIContext db,
+        ILogger<LiveDataEndpointLoggerCategory> logger,
+        string failureReason,
+        CancellationToken cancellationToken)
+    {
+        var observations = await LoadLatestObservationsAsync(db, cancellationToken);
+        if (observations.Count == 0)
+        {
+            logger.LogError(
+                "CBSL live fetch failed ({Reason}) and no cached MarketPriceObservation records are available.",
+                failureReason);
             return Results.Problem(
                 "The latest CBSL price report is temporarily unavailable.",
                 statusCode: StatusCodes.Status502BadGateway);
         }
-        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            logger.LogError(exception, "The CBSL price report request timed out.");
-            return Results.Problem(
-                "The CBSL price report request timed out. Try again shortly.",
-                statusCode: StatusCodes.Status504GatewayTimeout);
-        }
+
+        logger.LogWarning(
+            "CBSL live fetch failed ({Reason}). Returning {ObservationCount} cached MarketPriceObservation record(s).",
+            failureReason,
+            observations.Count);
+
+        var latestDate = observations[0].PublicationDate ?? observations[0].ObservationDate;
+        return Results.Ok(new LatestMarketPriceReport(
+            latestDate,
+            null,
+            CbslReportPage,
+            CbslSourceName,
+            CbslUpdateNote,
+            DateTimeOffset.UtcNow,
+            IsCachedFallback: true,
+            Warning: failureReason,
+            Observations: observations));
     }
 
+    private static LatestMarketPriceReport BuildLiveReport(
+        DateOnly reportDate,
+        string pdfUrl,
+        IReadOnlyList<MarketPriceObservationItem> observations)
+    {
+        return new LatestMarketPriceReport(
+            reportDate,
+            pdfUrl,
+            CbslReportPage,
+            CbslSourceName,
+            CbslUpdateNote,
+            DateTimeOffset.UtcNow,
+            IsCachedFallback: false,
+            Warning: null,
+            Observations: observations);
+    }
+
+    private static DateOnly GetSriLankaToday()
+    {
+        TimeZoneInfo slt;
+        try
+        {
+            slt = TimeZoneInfo.FindSystemTimeZoneById("Sri Lanka Standard Time");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            try
+            {
+                slt = TimeZoneInfo.FindSystemTimeZoneById("Asia/Colombo");
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                slt = TimeZoneInfo.CreateCustomTimeZone(
+                    "SLT",
+                    TimeSpan.FromHours(5.5),
+                    "Sri Lanka Standard Time",
+                    "Sri Lanka Standard Time");
+            }
+        }
+
+        var localNow = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, slt);
+        return DateOnly.FromDateTime(localNow.DateTime);
+    }
+
+    private sealed record CbslPdfMatch(DateOnly Date, string PdfUrl);
     private sealed record DistrictCenter(string Name, double Latitude, double Longitude);
 }
 
@@ -246,10 +566,28 @@ public sealed record CurrentDistrictWeather(
     string Source,
     string SourceUrl);
 
+public sealed record MarketPriceObservationItem(
+    Guid Id,
+    string Market,
+    Guid RiceVarietyId,
+    string RiceVarietyName,
+    string VarietyCode,
+    string Grade,
+    string PriceType,
+    decimal Value,
+    string Currency,
+    string Unit,
+    DateOnly ObservationDate,
+    DateOnly? PublicationDate,
+    string? Source);
+
 public sealed record LatestMarketPriceReport(
     DateOnly ReportDate,
-    string PdfUrl,
+    string? PdfUrl,
     string SourceUrl,
     string SourceName,
     string UpdateNote,
-    DateTimeOffset CheckedAtUtc);
+    DateTimeOffset CheckedAtUtc,
+    bool IsCachedFallback = false,
+    string? Warning = null,
+    IReadOnlyList<MarketPriceObservationItem>? Observations = null);
