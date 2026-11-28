@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Caching.Memory;
 using SWARNABHOOMI.Api.Assistant;
 using SWARNABHOOMI.Core.Entities;
 using SWARNABHOOMI.Core.Enums;
@@ -59,7 +60,19 @@ builder.Services.AddHttpClient("cbsl-prices", client =>
     UseCookies = true,
     CookieContainer = new CookieContainer()
 });
+builder.Services.AddHttpClient("google-weather", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(6);
+});
 builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
+builder.Services.AddScoped<IAssistantWeatherForecastService>(sp =>
+    new AssistantWeatherForecastService(
+        sp.GetRequiredService<SWARNABHOOMIContext>(),
+        sp.GetRequiredService<IMemoryCache>(),
+        sp.GetRequiredService<IConfiguration>(),
+        sp.GetRequiredService<ILogger<AssistantWeatherForecastService>>(),
+        sp.GetRequiredService<IHttpClientFactory>().CreateClient("google-weather")));
+builder.Services.AddScoped<IAssistantContextIntelligenceService, AssistantContextIntelligenceService>();
 builder.Services.AddScoped<IGovernanceNotificationService, GovernanceNotificationService>();
 builder.Services.AddScoped<IDashboardOverviewService, DashboardOverviewService>();
 builder.Services.AddScoped<IRiceIntelligenceService, RiceIntelligenceService>();

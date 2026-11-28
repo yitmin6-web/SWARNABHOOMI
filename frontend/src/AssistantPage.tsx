@@ -6,20 +6,33 @@ type Message = {
   content: string
 }
 
+type WeatherMeta = {
+  weatherSource?: string
+  forecastLocation?: string
+  generatedAtUtc?: string
+}
+
+const QUICK_DECISION_PROMPTS = [
+  'I plan to weed tomorrow — is it safe with the 7-day weather?',
+  'Analyze my harvest predictions, risks & opportunities',
+  'Which day this week is safest for fertilizer or spraying?',
+  'Compare current market prices and recommend my best next decision',
+] as const
+
 export default function AssistantPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [prompt, setPrompt] = useState('')
   const [error, setError] = useState('')
   const [sending, setSending] = useState(false)
+  const [weatherMeta, setWeatherMeta] = useState<WeatherMeta | null>(null)
   const conversationEnd = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     conversationEnd.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, sending])
 
-  const send = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const content = prompt.trim()
+  const submitPrompt = async (rawContent: string) => {
+    const content = rawContent.trim()
     if (!content || sending) return
 
     const nextMessages = [...messages, { role: 'user' as const, content }]
@@ -59,8 +72,21 @@ export default function AssistantPage() {
           buffer = buffer.slice(eventEnd + 2)
           const data = event.split(/\r?\n/).find((line) => line.startsWith('data:'))
           if (data) {
-            const chunk = JSON.parse(data.slice(5).trim()) as { content?: string; error?: string }
+            const chunk = JSON.parse(data.slice(5).trim()) as {
+              content?: string
+              error?: string
+              weatherSource?: string
+              forecastLocation?: string
+              generatedAtUtc?: string
+            }
             if (chunk.error) throw new Error(chunk.error)
+            if (chunk.weatherSource || chunk.forecastLocation) {
+              setWeatherMeta({
+                weatherSource: chunk.weatherSource,
+                forecastLocation: chunk.forecastLocation,
+                generatedAtUtc: chunk.generatedAtUtc,
+              })
+            }
             if (chunk.content) {
               reply += chunk.content
               setMessages((current) => current.map((message, index) =>
@@ -85,21 +111,40 @@ export default function AssistantPage() {
     }
   }
 
+  const send = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    await submitPrompt(prompt)
+  }
+
   return (
     <section className="extension-card assistant-card">
       <div className="extension-toolbar">
         <div>
           <span className="panel-eyebrow">SWARNABHOOMI SUPPORT</span>
           <h2>Ask the AI assistant</h2>
-          <p>Ask about using the platform and general rice-network workflows.</p>
+          <p>Database-grounded agronomic predictions, risk &amp; opportunity intelligence, and 7-day task-safety timing.</p>
+          {weatherMeta?.weatherSource && (
+            <div className="live-status" style={{ marginTop: 8 }}>
+              <i />
+              <span>
+                {weatherMeta.forecastLocation ? `${weatherMeta.forecastLocation} · ` : ''}
+                {weatherMeta.weatherSource}
+              </span>
+            </div>
+          )}
         </div>
-        <button type="button" className="extension-secondary-button" onClick={() => { setMessages([]); setError('') }} disabled={!messages.length}>
+        <button
+          type="button"
+          className="extension-secondary-button"
+          onClick={() => { setMessages([]); setError(''); setWeatherMeta(null) }}
+          disabled={!messages.length}
+        >
           New conversation
         </button>
       </div>
 
       <p className="assistant-disclaimer">
-        Replies are AI-generated and may be incorrect. The assistant does not provide authorized local agronomic rates or guaranteed prices.
+        Replies are AI-generated from live platform records and 7-day weather forecasts. Always verify critical field interventions with your local Agrarian Officer.
         Avoid sharing personal information, passwords, or other secrets. This conversation is not saved after you leave this page.
       </p>
 
@@ -108,7 +153,7 @@ export default function AssistantPage() {
           <div className="assistant-welcome">
             <span className="assistant-mark">✦</span>
             <strong>How can I help?</strong>
-            <p>Ask about field registration, seasons, cultivation records, demand or how to use SWARNABHOOMI.</p>
+            <p>Ask about harvest forecasts, field risks, market opportunities, or whether planned tasks like weeding, spraying, or fertilizing are safe this week.</p>
           </div>
         )}
         {messages.map((message, index) => (
@@ -117,11 +162,25 @@ export default function AssistantPage() {
             <p>{message.content}</p>
           </article>
         ))}
-        {sending && <p className="assistant-typing" role="status">Thinking…</p>}
+        {sending && <p className="assistant-typing" role="status">Analyzing records &amp; 7-day forecast…</p>}
         <div ref={conversationEnd} />
       </div>
 
       {error && <p className="extension-alert extension-alert-error" role="alert">{error}</p>}
+      <div className="toolbar-button-group" style={{ marginBottom: 10 }}>
+        {QUICK_DECISION_PROMPTS.map((quickPrompt) => (
+          <button
+            key={quickPrompt}
+            type="button"
+            className="extension-secondary-button"
+            style={{ minHeight: 34, padding: '6px 10px', fontSize: '0.8rem', fontWeight: 550 }}
+            disabled={sending}
+            onClick={() => void submitPrompt(quickPrompt)}
+          >
+            {quickPrompt}
+          </button>
+        ))}
+      </div>
       <form className="assistant-input-form" onSubmit={(event) => void send(event)}>
         <label className="sr-only" htmlFor="assistant-prompt">Your question</label>
         <textarea

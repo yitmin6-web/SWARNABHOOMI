@@ -9,7 +9,9 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using SWARNABHOOMI.Core.Entities;
+using SWARNABHOOMI.Core.Enums;
 using SWARNABHOOMI.Infrastructure.Data;
+using SWARNABHOOMI.Services;
 
 namespace SWARNABHOOMI.Api.Assistant;
 
@@ -166,6 +168,7 @@ public static class AssistantEndpoints
         IWebHostEnvironment environment,
         IHttpClientFactory httpClientFactory,
         IMemoryCache memoryCache,
+        IAssistantContextIntelligenceService intelligenceService,
         ILogger<AssistantEndpointLoggerCategory> logger,
         CancellationToken cancellationToken)
     {
@@ -231,6 +234,32 @@ public static class AssistantEndpoints
             return;
         }
 
+        AssistantIntelligenceBriefing? briefing = null;
+        var effectiveSystemPrompt = AssistantSystemPrompt;
+
+        var userIdString = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var roleString = httpContext.User.FindFirstValue(ClaimTypes.Role);
+        if (Guid.TryParse(userIdString, out var userId) &&
+            Enum.TryParse<UserRole>(roleString, out var userRole))
+        {
+            try
+            {
+                briefing = await intelligenceService.BuildBriefingAsync(
+                    userId,
+                    userRole,
+                    request.Messages[^1].Content,
+                    cancellationToken);
+                effectiveSystemPrompt = BuildGroundedSystemPrompt(briefing);
+            }
+            catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Failed to build grounded database/weather intelligence briefing for user {UserId}; falling back to base prompt.",
+                    userId);
+            }
+        }
+
         try
         {
             var client = httpClientFactory.CreateClient("ai-assistant");
@@ -238,6 +267,8 @@ public static class AssistantEndpoints
             {
                 await StreamGeminiResponseAsync(
                     request.Messages,
+                    effectiveSystemPrompt,
+                    briefing,
                     model,
                     apiKey,
                     client,
@@ -250,6 +281,8 @@ public static class AssistantEndpoints
 
             await StreamOpenAiResponseAsync(
                 request.Messages,
+                effectiveSystemPrompt,
+                briefing,
                 model,
                 baseUri,
                 apiKey,
@@ -286,6 +319,8 @@ public static class AssistantEndpoints
 
     private static async Task StreamGeminiResponseAsync(
         IReadOnlyList<AssistantChatMessage> messages,
+        string systemPrompt,
+        AssistantIntelligenceBriefing? briefing,
         string configuredModel,
         string apiKey,
         HttpClient client,
@@ -320,7 +355,7 @@ public static class AssistantEndpoints
         for (var index = 0; index < maxAttempts; index++)
         {
             var model = candidates[index];
-            var payload = BuildGeminiPayload(model, messages);
+            var payload = BuildGeminiPayload(model, systemPrompt, messages);
 
             using var providerRequest = new HttpRequestMessage(
                 HttpMethod.Post,
@@ -413,7 +448,16 @@ public static class AssistantEndpoints
                 httpContext.Response.StatusCode = StatusCodes.Status200OK;
                 httpContext.Response.ContentType = "text/event-stream";
                 httpContext.Response.Headers.CacheControl = "no-cache";
-                await WriteAssistantEventAsync(httpContext.Response, new { content = reply }, cancellationToken);
+                await WriteAssistantEventAsync(
+                    httpContext.Response,
+                    new
+                    {
+                        content = reply,
+                        weatherSource = briefing?.WeatherSource,
+                        forecastLocation = briefing?.ForecastLocation,
+                        generatedAtUtc = briefing?.Weather.GeneratedAtUtc ?? DateTimeOffset.UtcNow
+                    },
+                    cancellationToken);
                 return;
             }
         }
@@ -427,7 +471,31 @@ public static class AssistantEndpoints
             cancellationToken);
     }
 
-    private static string BuildGeminiPayload(string model, IReadOnlyList<AssistantChatMessage> messages)
+    private static string BuildGroundedSystemPrompt(AssistantIntelligenceBriefing briefing) =>
+        $"""
+        {AssistantSystemPrompt}
+
+        You are acting as the SWARNABHOOMI Database-Grounded Agronomic & Decision Intelligence Advisor.
+        GROUNDING & DECISION RULES:
+        1. Always answer using the exact database numbers, dates, prices, and 7-day forecast provided below—never invent farm numbers, yields, or weather figures.
+        2. When the user asks about a planned future farm task (e.g., weeding, spraying, fertilizing, harvesting tomorrow or on a specific weekday), explicitly check that exact date in the 7-day forecast table, give a clear SAFE / CAUTION / UNSAFE verdict with exact rain probability, rainfall (mm), wind, and temperature, and recommend the best alternative day if unsafe or marginal.
+        3. Structure decision/risk answers clearly into:
+           - Direct Verdict / Answer
+           - Key Predictions & Data
+           - Risks
+           - Opportunities
+           - Recommended Next Actions
+        4. Preserve strict role privacy: NEVER reveal individual farmer names, phones, emails, or farm names to Buyers.
+        5. Reply naturally in the same language style as the user (English, Sinhala, or Singlish).
+
+        LIVE GROUNDED CONTEXT:
+        {briefing.FormattedPromptContext}
+        """;
+
+    private static string BuildGeminiPayload(
+        string model,
+        string systemPrompt,
+        IReadOnlyList<AssistantChatMessage> messages)
     {
         if (model.StartsWith("gemma", StringComparison.OrdinalIgnoreCase))
         {
@@ -439,7 +507,7 @@ public static class AssistantEndpoints
                     new
                     {
                         text = index == 0
-                            ? $"{AssistantSystemPrompt}\n\nUser message:\n{message.Content}"
+                            ? $"{systemPrompt}\n\nUser message:\n{message.Content}"
                             : message.Content
                     }
                 }
@@ -454,7 +522,7 @@ public static class AssistantEndpoints
 
         return JsonSerializer.Serialize(new
         {
-            systemInstruction = new { parts = new[] { new { text = AssistantSystemPrompt } } },
+            systemInstruction = new { parts = new[] { new { text = systemPrompt } } },
             contents = messages.Select(message => new
             {
                 role = message.Role == "assistant" ? "model" : "user",
@@ -497,6 +565,8 @@ public static class AssistantEndpoints
 
     private static async Task StreamOpenAiResponseAsync(
         IReadOnlyList<AssistantChatMessage> messages,
+        string systemPrompt,
+        AssistantIntelligenceBriefing? briefing,
         string model,
         Uri baseUri,
         string apiKey,
@@ -507,7 +577,7 @@ public static class AssistantEndpoints
     {
         var providerMessages = new List<ProviderMessage>
         {
-            new("system", AssistantSystemPrompt)
+            new("system", systemPrompt)
         };
         providerMessages.AddRange(messages.Select(message => new ProviderMessage(message.Role, message.Content)));
 
@@ -521,7 +591,7 @@ public static class AssistantEndpoints
                     model,
                     messages = providerMessages,
                     stream = true,
-                    max_tokens = 800,
+                    max_tokens = 1400,
                     temperature = 0.2
                 }),
                 Encoding.UTF8,
@@ -550,6 +620,19 @@ public static class AssistantEndpoints
         httpContext.Response.ContentType = "text/event-stream";
         httpContext.Response.Headers.CacheControl = "no-cache";
         httpContext.Response.Headers.Append("X-Accel-Buffering", "no");
+
+        if (briefing is not null)
+        {
+            await WriteAssistantEventAsync(
+                httpContext.Response,
+                new
+                {
+                    weatherSource = briefing.WeatherSource,
+                    forecastLocation = briefing.ForecastLocation,
+                    generatedAtUtc = briefing.Weather.GeneratedAtUtc
+                },
+                cancellationToken);
+        }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
