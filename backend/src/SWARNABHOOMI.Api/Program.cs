@@ -441,12 +441,14 @@ api.MapLiveDataEndpoints();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<SWARNABHOOMIContext>();
+    var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>();
     DatabaseInitializer.Migrate(db);
     DbSeeder.Seed(db);
     AuthEndpoints.EnsureBootstrapAdministrator(
         db,
-        scope.ServiceProvider.GetRequiredService<IPasswordHasher<User>>(),
+        passwordHasher,
         app.Configuration);
+    await SyntheticTestDataSeeder.SeedAsync(db, passwordHasher.HashPassword);
 }
 
 app.Run();
